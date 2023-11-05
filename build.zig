@@ -4,10 +4,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zware_dep = b.dependency("zware", .{
-        .target = target,
-        .optimize = optimize,
-    });
+    const zware_dep = b.dependency("zware", .{});
+    const zigx_dep = b.dependency("zigx", .{});
 
     {
         const exe = b.addExecutable(.{
@@ -17,6 +15,7 @@ pub fn build(b: *std.Build) void {
             .optimize = optimize,
         });
         exe.addModule("zware", zware_dep.module("zware"));
+        exe.addModule("x", zigx_dep.module("zigx"));
         b.installArtifact(exe);
 
         const run_cmd = b.addRunArtifact(exe);

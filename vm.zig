@@ -4,6 +4,10 @@ const zware = @import("zware");
 
 const MappedFile = @import("MappedFile.zig");
 
+pub const std_options = struct {
+    pub const log_level = .info;
+};
+
 pub fn oom(e: error{OutOfMemory}) noreturn {
     @panic(@errorName(e));
 }
@@ -77,13 +81,8 @@ pub fn main() !void {
     for (instance.module.exports.list.items) |e| {
         std.log.info("export '{s}'", .{e.name});
     }
-
     try instance.invoke("start", &[_]u64{}, &[_]u64{}, .{});
-    for (0 .. 10) |frame| {
-        std.log.info("running frame {}", .{frame});
-        try instance.invoke("update", &[_]u64{}, &[_]u64{}, .{});
-        // TODO: update the backend with the current video/audio
-    }
+    try @import("x11backend.zig").go(&instance);
 }
 
 fn initWasm4(store: *zware.Store) !void {
@@ -119,6 +118,7 @@ fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {
     const flags = vm.popOperand(u32);
     std.log.debug("todo: blit ptr={} pos={},{} size={}x{} flags=0x{x}", .{sprite_ptr, x, y, width, height, flags});
 }
+
 fn blitSub(vm: *zware.VirtualMachine) zware.WasmError!void {
     _ = vm;
     @panic("todo: blitSub");

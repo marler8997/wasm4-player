@@ -6,6 +6,10 @@
             .url = "https://github.com/malcolmstill/zware/archive/aba80711094ac70ea0d60cfbf0945f58d08e1176.tar.gz",
             .hash = "1220cea5e5e433d05e7ca6a164cd596e1b0ab59b5102cd1fa1463e7466b5ebae7f1d",
         },
+        .zigx = .{
+            .url = "https://github.com/marler8997/zigx/archive/74ffbcb6043a5a7b30656be976764c3276182af9.tar.gz",
+            .hash = "1220126c6e8a53bd1205cafe5bee5f1d277bb5950aa7f1fddcb4af78e5b9f22ee5aa",
+        },
     },
     .paths = .{
         "build.zig",
