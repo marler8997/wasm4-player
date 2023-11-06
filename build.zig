@@ -9,8 +9,8 @@ pub fn build(b: *std.Build) void {
 
     {
         const exe = b.addExecutable(.{
-            .name = "wasm4-vm",
-            .root_source_file = .{ .path = "vm.zig" },
+            .name = "wasm4-player",
+            .root_source_file = .{ .path = "player.zig" },
             .target = target,
             .optimize = optimize,
         });
