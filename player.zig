@@ -79,10 +79,23 @@ pub fn main() !void {
     try instance.instantiate();
     defer instance.deinit();
 
+    var has_start = false;
+    var has_update = false;
     for (instance.module.exports.list.items) |e| {
-        std.log.info("export '{s}'", .{e.name});
+        if (std.mem.eql(u8, e.name, "start")) {
+            has_start = true;
+        } else if (std.mem.eql(u8, e.name, "update")) {
+            has_update = true;
+        } else {
+            std.log.warn("unknown export '{s}'", .{e.name});
+        }
     }
-    try instance.invoke("start", &[_]u64{}, &[_]u64{}, .{});
+    if (!has_update) {
+        std.log.err("wasm file is missing the 'update' export", .{});
+    }
+    if (has_start) {
+        try instance.invoke("start", &[_]u64{}, &[_]u64{}, .{});
+    }
     try @import("x11backend.zig").go(&instance);
 }
 
