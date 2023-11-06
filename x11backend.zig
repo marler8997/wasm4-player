@@ -1,27 +1,42 @@
 const std = @import("std");
 const zware = @import("zware");
+const wasm4 = @import("wasm4.zig");
 const zigx = @import("x");
 const x11common = @import("x11common.zig");
 
-const ResourceIds = struct {
-    base: u32,
-    pub fn window(self: ResourceIds) u32 { return self.base; }
-    pub fn bg_gc(self: ResourceIds) u32 { return self.base + 1; }
-    pub fn fg_gc(self: ResourceIds) u32 { return self.base + 2; }
+const Size = struct {
+    x: u16,
+    y: u16,
+    pub fn equals(self: Size, other: Size) bool {
+        return self.x == other.x and self.y == other.y;
+    }
+};
+
+const wasm4_size = Size{ .x = 160, .y = 160 };
+
+const global = struct {
+    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    const arena = arena_instance.allocator();
+
+    var image_format: ImageFormat = undefined;
+    var resource_id_base: u32 = undefined;
+    var palette: [4]u32 = undefined;
+    var window_size: Size = .{ .x = wasm4_size.x, .y = wasm4_size.y };
+    var put_img_buf: ?[]u8 = null;
+    pub fn window_id() u32 { return resource_id_base; }
+    pub fn bg_gc_id() u32 { return resource_id_base + 1; }
+    pub fn fg_gc_id() u32 { return resource_id_base + 2; }
 };
 
 pub fn go(instance: *zware.Instance) !void {
     try zigx.wsaStartup();
 
-    var arena_instance = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena_instance.deinit();
-    const arena = arena_instance.allocator();
-
-    const conn = try x11common.connect(arena);
+    const conn = try x11common.connect(global.arena);
     defer std.os.shutdown(conn.sock, .both) catch {};
 
     const screen = blk: {
         const fixed = conn.setup.fixed();
+        global.resource_id_base = fixed.resource_id_base;
         inline for (@typeInfo(@TypeOf(fixed.*)).Struct.fields) |field| {
             std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
         }
@@ -37,19 +52,29 @@ pub fn go(instance: *zware.Instance) !void {
         inline for (@typeInfo(@TypeOf(screen.*)).Struct.fields) |field| {
             std.log.debug("SCREEN 0| {s}: {any}", .{field.name, @field(screen, field.name)});
         }
+
+        const image_endian: std.builtin.Endian = switch (fixed.image_byte_order) {
+            .lsb_first => .Little,
+            .msb_first => .Big,
+            else => |order| std.debug.panic("unknown image-byte-order {}", .{order}),
+        };
+        global.image_format = getImageFormat(
+            image_endian,
+            formats,
+            screen.root_depth,
+        ) catch |err| std.debug.panic("can't resolve root depth {} format: {s}", .{screen.root_depth, @errorName(err)});
+
         break :blk screen;
     };
 
-    // TODO: maybe need to call conn.setup.verify or something?
-    const resource_ids = ResourceIds{ .base = conn.setup.fixed().resource_id_base };
     {
         var msg_buf: [zigx.create_window.max_len]u8 = undefined;
         const len = zigx.create_window.serialize(&msg_buf, .{
-            .window_id = resource_ids.window(),
+            .window_id = global.window_id(),
             .parent_window_id = screen.root,
             .depth = 0, // we don't care, just inherit from the parent
             .x = 0, .y = 0,
-            .width = 160, .height = 160,
+            .width = wasm4_size.x, .height = wasm4_size.y,
             .border_width = 0, // TODO: what is this?
             .class = .input_output,
             .visual_id = screen.root_visual,
@@ -58,13 +83,8 @@ pub fn go(instance: *zware.Instance) !void {
             .event_mask =
                   zigx.event.key_press
                 | zigx.event.key_release
-                | zigx.event.button_press
-                | zigx.event.button_release
-                | zigx.event.enter_window
-                | zigx.event.leave_window
-                | zigx.event.pointer_motion
-                | zigx.event.keymap_state
                 | zigx.event.exposure
+                | zigx.event.structure_notify
                 ,
         });
         try conn.send(msg_buf[0..len]);
@@ -73,8 +93,8 @@ pub fn go(instance: *zware.Instance) !void {
     {
         var msg_buf: [zigx.create_gc.max_len]u8 = undefined;
         const len = zigx.create_gc.serialize(&msg_buf, .{
-            .gc_id = resource_ids.bg_gc(),
-            .drawable_id = resource_ids.window(),
+            .gc_id = global.bg_gc_id(),
+            .drawable_id = global.window_id(),
         }, .{
             .foreground = screen.black_pixel,
         });
@@ -83,8 +103,8 @@ pub fn go(instance: *zware.Instance) !void {
     {
         var msg_buf: [zigx.create_gc.max_len]u8 = undefined;
         const len = zigx.create_gc.serialize(&msg_buf, .{
-            .gc_id = resource_ids.fg_gc(),
-            .drawable_id = resource_ids.window(),
+            .gc_id = global.fg_gc_id(),
+            .drawable_id = global.window_id(),
         }, .{
             .background = screen.black_pixel,
             .foreground = 0xffaadd,
@@ -94,7 +114,7 @@ pub fn go(instance: *zware.Instance) !void {
 
     {
         var msg: [zigx.map_window.len]u8 = undefined;
-        zigx.map_window.serialize(&msg, resource_ids.window());
+        zigx.map_window.serialize(&msg, global.window_id());
         try conn.send(&msg);
     }
 
@@ -115,8 +135,10 @@ pub fn go(instance: *zware.Instance) !void {
     const micros_per_frame = @divTrunc(1000000, 60);
     var delay_update_timestamp: ?i64 = null;
 
+    var exposed = false;
+
     while (true) {
-        {
+        if (exposed) {
             const loop_timestamp = std.time.microTimestamp();
             const do_update = blk: {
                 if (delay_update_timestamp) |delay_timestamp| {
@@ -130,6 +152,7 @@ pub fn go(instance: *zware.Instance) !void {
                 if (do_update) {
                     delay_update_timestamp = loop_timestamp;
                     try instance.invoke("update", &[_]u64{}, &[_]u64{}, .{});
+                    try render(instance.*, conn.sock);
                     break :blk std.time.microTimestamp();
                 }
                 break :blk loop_timestamp;
@@ -145,7 +168,6 @@ pub fn go(instance: *zware.Instance) !void {
             } else {
                 //std.log.info("no wait (elapsed={} want={})", .{elapsed_micros, micros_per_frame});
             }
-
         }
 
         {
@@ -209,9 +231,8 @@ pub fn go(instance: *zware.Instance) !void {
                 .keymap_notify => |msg| {
                     std.log.info("keymap_state: {}", .{msg});
                 },
-                .expose => |msg| {
-                    std.log.info("expose: {}", .{msg});
-                    try renderX11(conn.sock, resource_ids);
+                .expose => {
+                    exposed = true;
                 },
                 .mapping_notify => |msg| {
                     std.log.info("mapping_notify: {}", .{msg});
@@ -221,18 +242,100 @@ pub fn go(instance: *zware.Instance) !void {
                     std.log.info("todo: server msg {}", .{msg});
                     return error.UnhandledServerMsg;
                 },
-                .map_notify,
-                .reparent_notify,
-                .configure_notify,
-                => unreachable, // did not register for these
+                .configure_notify => |msg| onConfigureNotify(msg.*),
+                .map_notify => {},
+                .reparent_notify => {},
             }
         }
     }
 }
 
-fn renderX11(sock: std.os.socket_t, resource_ids: ResourceIds) !void {
-    _ = sock;
-    _ = resource_ids;
+fn render(
+    instance: zware.Instance,
+    sock: std.os.socket_t,
+) !void {
+    //std.log.info("render", .{});
+
+    // TODO: populate the palette correctly
+    global.palette[0] = 0xff000000;
+    global.palette[1] = 0x00ff0000;
+    global.palette[2] = 0x0000ff00;
+    global.palette[3] = 0x000000ff;
+
+    //std.log.info("render mem.data.len={}", .{mem.len});
+    const mem = wasm4.getMem(instance);
+    const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
+
+    const stride = calcStride(
+        global.image_format.bits_per_pixel,
+        global.image_format.scanline_pad,
+        global.window_size.x,
+    );
+
+    // TODO: use the SHM extension if available
+
+    const stride_u18 = std.math.cast(u18, stride) orelse
+        std.debug.panic("image stride {} too big!", .{stride});
+    const msg_len = zigx.put_image.getLen(stride_u18);
+    if (global.put_img_buf) |buf| {
+        if (buf.len != msg_len) {
+            //std.log.info("realloc {} to {}", .{buf.len, msg_len});
+            global.put_img_buf = try global.arena.realloc(buf, msg_len);
+        }
+    } else {
+        global.put_img_buf = try global.arena.alloc(u8, msg_len);
+    }
+    const msg = global.put_img_buf.?;
+
+    const msg_data = msg[zigx.put_image.data_offset..];
+    var row: u16 = 0;
+    while (row < global.window_size.y) : (row += 1) {
+        zigx.put_image.serializeNoDataCopy(msg.ptr, stride_u18, .{
+            .format = .z_pixmap,
+            .drawable_id = global.window_id(),
+            .gc_id = global.fg_gc_id(),
+            .width = global.window_size.x,
+            .height = 1,
+            .x = 0,
+            .y = @bitCast(row),
+            .left_pad = 0,
+            .depth = global.image_format.depth,
+        });
+        var dst_off: usize = 0;
+        const y_ratio: f32 = @as(f32, @floatFromInt(row)) / @as(f32, @floatFromInt(global.window_size.y));
+        var src_y: usize = @intFromFloat(@trunc(y_ratio * @as(f32, @floatFromInt(wasm4_size.y))));
+        if (src_y >= wasm4_size.y) src_y = wasm4_size.y - 1;
+        //const src_y_off: usize = src_y * wasm4_size.x;
+
+        const fb_row = fb.ptr + src_y * wasm4.framebuffer_stride;
+
+        var col: usize = 0;
+        while (col < global.window_size.x) : (col += 1) {
+            const x_ratio: f32 = @as(f32, @floatFromInt(col)) / @as(f32, @floatFromInt(global.window_size.x));
+            var src_x: usize = @intFromFloat(@trunc(x_ratio * @as(f32, @floatFromInt(wasm4_size.x))));
+            if (src_x >= wasm4_size.x) src_x = wasm4_size.x - 1;
+
+            // 4 pixels per byte
+            const color_byte = fb_row[@divTrunc(src_x, 4)];
+            const pixel_pos: u2 = @intCast(src_x % 4);
+            const shift: u3 = switch (pixel_pos) { 0 => 6, 1 => 4, 2 => 2, 3 => 0 };
+            const color_palette_index: u2 = @intCast(0x3 & (color_byte >> shift));
+
+            switch (global.image_format.depth) {
+                16 => @panic("todo"),
+                24 => {
+                    const color: u32 = global.palette[color_palette_index];
+                    msg_data[dst_off + 0] = @intCast(0xff & (color >>  0));
+                    msg_data[dst_off + 1] = @intCast(0xff & (color >>  8));
+                    msg_data[dst_off + 2] = @intCast(0xff & (color >> 16));
+                },
+                32 => @panic("todo"),
+                else => |d| std.debug.panic("TODO: implement image depth {}", .{d}),
+            }
+            dst_off += global.image_format.bits_per_pixel / 8;
+        }
+        try sendAll(sock, msg);
+    }
 }
 
 fn waitSocketReadable(sock: std.os.socket_t, timeout: i32) !bool {
@@ -249,4 +352,88 @@ fn waitSocketReadable(sock: std.os.socket_t, timeout: i32) !bool {
     }
     if (result != 1) std.debug.panic("poll unexpectedly returned {}", .{result});
     return true;
+}
+
+// ZFormat
+// depth:
+//     bits-per-pixel: 1, 4, 8, 16, 24, 32
+//         bpp can be larger than depth, when it is, the
+//         least significant bits hold the pixmap data
+//         when bpp is 4, order of nibbles in the bytes is the
+//         same as the image "byte-order"
+//     scanline-pad: 8, 16, 32
+const ImageFormat = struct {
+    endian: std.builtin.Endian,
+    depth: u8,
+    bits_per_pixel: u8,
+    scanline_pad: u8,
+};
+fn getImageFormat(
+    endian: std.builtin.Endian,
+    formats: []const align(4) zigx.Format,
+    root_depth: u8,
+) !ImageFormat {
+    var opt_match_index: ?usize = null;
+    for (formats, 0..) |format, i| {
+        if (format.depth == root_depth) {
+            if (opt_match_index) |_|
+                return error.MultiplePixmapFormatsSameDepth;
+            opt_match_index = i;
+        }
+    }
+    const match_index = opt_match_index orelse
+        return error.MissingPixmapFormat;
+    return ImageFormat {
+        .endian = endian,
+        .depth = root_depth,
+        .bits_per_pixel = formats[match_index].bits_per_pixel,
+        .scanline_pad = formats[match_index].scanline_pad,
+    };
+}
+
+fn calcStride(
+    bits_per_pixel: u8,
+    scanline_pad: u8,
+    width: u16,
+) usize {
+    std.debug.assert(0 == (bits_per_pixel & 0x7));
+    std.debug.assert(0 == (scanline_pad & 0x7));
+    const bytes_per_pixel = bits_per_pixel / 8;
+    return std.mem.alignForward(
+        usize,
+        @as(usize, @intCast(bytes_per_pixel)) * @as(usize, @intCast(width)),
+        scanline_pad / 8,
+    );
+}
+
+fn sendAll(sock: std.os.socket_t, data: []const u8) !void {
+    var total_sent: usize = 0;
+    while (total_sent != data.len) {
+        const last_sent = zigx.writeSock(sock, data[total_sent..], 0) catch |err| switch (err) {
+            error.WouldBlock => {
+                std.time.sleep(std.time.ns_per_ms * 2); // sleep for 2 ms I guess?
+                continue;
+            },
+            error.BrokenPipe => {
+                std.log.info("X server connection closed", .{});
+                std.os.exit(0);
+            },
+            else => |e| return e,
+        };
+        if (last_sent == 0) {
+            std.debug.panic("write sock returned 0!", .{});
+        }
+        total_sent += last_sent;
+    }
+}
+
+fn onConfigureNotify(msg: zigx.Event.ConfigureNotify) void {
+    const new_window_size = Size{ .x = msg.width, .y = msg.height };
+    if (!global.window_size.equals(new_window_size)) {
+        std.log.info("X11 window size changed from {}x{} to {}x{}", .{
+            global.window_size.x, global.window_size.y,
+            new_window_size.x, new_window_size.y,
+        });
+        global.window_size = new_window_size;
+    }
 }
