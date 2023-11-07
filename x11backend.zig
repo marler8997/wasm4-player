@@ -20,7 +20,6 @@ const global = struct {
 
     var image_format: ImageFormat = undefined;
     var resource_id_base: u32 = undefined;
-    var palette: [4]u32 = undefined;
     var window_size: Size = .{ .x = wasm4_size.x, .y = wasm4_size.y };
     var put_img_buf: ?[]u8 = null;
     pub fn window_id() u32 { return resource_id_base; }
@@ -151,6 +150,7 @@ pub fn go(instance: *zware.Instance) !void {
             const now = blk: {
                 if (do_update) {
                     delay_update_timestamp = loop_timestamp;
+                    wasm4.clearFramebuffer(instance.*);
                     try instance.invoke("update", &[_]u64{}, &[_]u64{}, .{});
                     try render(instance.*, conn.sock);
                     break :blk std.time.microTimestamp();
@@ -176,9 +176,12 @@ pub fn go(instance: *zware.Instance) !void {
                 std.log.err("buffer size {} not big enough!", .{buf.half_len});
                 std.os.exit(0xff);
             }
-            // TODO: use a timeout so we can update the frame
             const len = zigx.readSock(conn.sock, recv_buf, 0) catch |err| switch (err) {
                 error.WouldBlock => continue,
+                error.ConnectionResetByPeer => {
+                    std.log.info("X server connection reset", .{});
+                    std.os.exit(0);
+                },
                 else => |e| return e,
             };
             if (len == 0) {
@@ -256,15 +259,11 @@ fn render(
 ) !void {
     //std.log.info("render", .{});
 
-    // TODO: populate the palette correctly
-    global.palette[0] = 0xff000000;
-    global.palette[1] = 0x00ff0000;
-    global.palette[2] = 0x0000ff00;
-    global.palette[3] = 0x000000ff;
-
     //std.log.info("render mem.data.len={}", .{mem.len});
     const mem = wasm4.getMem(instance);
     const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
+
+    const palette: *align(1) const [4]u32 = @ptrCast(mem + wasm4.palette_addr);
 
     const stride = calcStride(
         global.image_format.bits_per_pixel,
@@ -324,7 +323,7 @@ fn render(
             switch (global.image_format.depth) {
                 16 => @panic("todo"),
                 24 => {
-                    const color: u32 = global.palette[color_palette_index];
+                    const color: u32 = palette[color_palette_index];
                     msg_data[dst_off + 0] = @intCast(0xff & (color >>  0));
                     msg_data[dst_off + 1] = @intCast(0xff & (color >>  8));
                     msg_data[dst_off + 2] = @intCast(0xff & (color >> 16));
