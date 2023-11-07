@@ -24,9 +24,17 @@ pub fn getDrawColor(mem: [*]const u8, color: DrawColor) ?u2 {
 
 pub const palette_addr = 0x4;
 pub const draw_colors_addr = 0x14;
+pub const gamepad1_addr = 0x16;
 
 pub const framebuffer_addr = 0xa0;
 pub const framebuffer_len = 6400;  // 160 * 160 * 2 (bits per pixel) / 8 (bits per byte)
 pub const framebuffer_stride = 40; // 160 * 2 (bits per pixel) / 8 (bits per byte)
 
 pub const pixels_per_byte = 4;
+
+pub const button_1:     u8 = 0b00000001;
+pub const button_2:     u8 = 0b00000010;
+pub const button_left:  u8 = 0b00010000;
+pub const button_right: u8 = 0b00100000;
+pub const button_up:    u8 = 0b01000000;
+pub const button_down:  u8 = 0b10000000;

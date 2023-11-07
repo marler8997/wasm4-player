@@ -29,6 +29,12 @@ const global = struct {
     pub fn fg_gc_id() u32 { return resource_id_base + 2; }
 };
 
+const Key = enum {
+    _1, _2,
+    left, right,
+    up, down,
+};
+
 pub fn go(instance: *zware.Instance) !void {
     try zigx.wsaStartup();
 
@@ -67,6 +73,51 @@ pub fn go(instance: *zware.Instance) !void {
 
         break :blk screen;
     };
+
+
+    var keycode_map = std.AutoHashMapUnmanaged(u8, Key){};
+    {
+        const keymap = try zigx.keymap.request(global.arena, conn.sock, conn.setup.fixed().*);
+        defer keymap.deinit(global.arena);
+        std.log.info("Keymap: syms_per_code={} total_syms={}", .{keymap.syms_per_code, keymap.syms.len});
+        {
+            var i: usize = 0;
+            var sym_offset: usize = 0;
+            while (i < keymap.keycode_count) : (i += 1) {
+                const keycode: u8 = @intCast(conn.setup.fixed().min_keycode + i);
+                var j: usize = 0;
+                while (j < keymap.syms_per_code) : (j += 1) {
+                    const sym = keymap.syms[sym_offset];
+                    if (false) {
+                    } else if (sym == @intFromEnum(zigx.charset.Combined.latin_x) or
+                                   sym == @intFromEnum(zigx.charset.Combined.latin_X)
+                    ) {
+                        std.log.info("keycode {} is button 1", .{keycode});
+                        try keycode_map.put(global.arena, keycode, ._1);
+                    } else if (sym == @intFromEnum(zigx.charset.Combined.latin_z) or
+                        sym == @intFromEnum(zigx.charset.Combined.latin_Z)
+                    ) {
+                        std.log.info("keycode {} is button 2", .{keycode});
+                        try keycode_map.put(global.arena, keycode, ._2);
+                    } else if (sym == @intFromEnum(zigx.charset.Combined.kbd_left)) {
+                        std.log.info("keycode {} is left", .{keycode});
+                        try keycode_map.put(global.arena, keycode, .left);
+                    } else if (sym == @intFromEnum(zigx.charset.Combined.kbd_right)) {
+                        std.log.info("keycode {} is right", .{keycode});
+                        try keycode_map.put(global.arena, keycode, .right);
+                    } else if (sym == @intFromEnum(zigx.charset.Combined.kbd_up)) {
+                        std.log.info("keycode {} is up", .{keycode});
+                        try keycode_map.put(global.arena, keycode, .up);
+                    } else if (sym == @intFromEnum(zigx.charset.Combined.kbd_down)) {
+                        std.log.info("keycode {} is down", .{keycode});
+                        try keycode_map.put(global.arena, keycode, .down);
+                    }
+                    sym_offset += 1;
+                }
+            }
+        }
+    }
+
 
     {
         var msg_buf: [zigx.create_window.max_len]u8 = undefined;
@@ -217,10 +268,14 @@ pub fn go(instance: *zware.Instance) !void {
                     return error.TodoHandleReplyMessage;
                 },
                 .key_press => |msg| {
-                    std.log.info("key_press: keycode={}", .{msg.keycode});
+                    if (keycode_map.get(msg.keycode)) |key| {
+                        updateKey(instance.*, key, .down);
+                    }
                 },
                 .key_release => |msg| {
-                    std.log.info("key_release: keycode={}", .{msg.keycode});
+                    if (keycode_map.get(msg.keycode)) |key| {
+                        updateKey(instance.*, key, .up);
+                    }
                 },
                 .button_press => |msg| {
                     std.log.info("button_press: {}", .{msg});
@@ -258,6 +313,22 @@ pub fn go(instance: *zware.Instance) !void {
                 .reparent_notify => {},
             }
         }
+    }
+}
+
+fn updateKey(instance: zware.Instance, key: Key, state: enum { down, up }) void {
+    const flag = switch (key) {
+        ._1 => wasm4.button_1,
+        ._2 => wasm4.button_2,
+        .left => wasm4.button_left,
+        .right => wasm4.button_right,
+        .up => wasm4.button_up,
+        .down => wasm4.button_down,
+    };
+    const mem = wasm4.getMem(instance);
+    switch (state) {
+        .down => mem[wasm4.gamepad1_addr] |= flag,
+        .up => mem[wasm4.gamepad1_addr] &= ~flag,
     }
 }
 
