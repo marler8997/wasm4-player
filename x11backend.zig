@@ -332,9 +332,9 @@ fn render(
                 16 => @panic("todo"),
                 24 => {
                     const color: u32 = palette[color_palette_index];
-                    msg_data[dst_off + 0] = @intCast(0xff & (color >>  0));
-                    msg_data[dst_off + 1] = @intCast(0xff & (color >>  8));
-                    msg_data[dst_off + 2] = @intCast(0xff & (color >> 16));
+                    msg_data[dst_off + 0] = @intCast(0xff & (color >>  0)); // blue
+                    msg_data[dst_off + 1] = @intCast(0xff & (color >>  8)); // green
+                    msg_data[dst_off + 2] = @intCast(0xff & (color >> 16)); // red
                 },
                 32 => @panic("todo"),
                 else => |d| std.debug.panic("TODO: implement image depth {}", .{d}),

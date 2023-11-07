@@ -201,20 +201,26 @@ fn rect(vm: *zware.VirtualMachine) zware.WasmError!void {
     //std.log.info("rect {},{} {}x{}", .{x, y, width, height});
 
     const fb_rect = getFbRect(x, y, width, height) orelse return;
-    const draw_colors = mem[wasm4.draw_colors_addr];
-    const draw_color1: u3 = @intCast((draw_colors >> 0) % 5);
-    const draw_color2: u3 = @intCast((draw_colors >> 4) % 5);
-    if (draw_color1 == 0 and draw_color2 == 0) return;
-    const border_color: u2 = @intCast((if (draw_color2 == 0) draw_color1 else draw_color2) - 1);
-
+    const draw_color1 = wasm4.getDrawColor(mem, ._1);
+    const draw_color2 = wasm4.getDrawColor(mem, ._2);
+    const border_color: u2 = blk: {
+        if (draw_color2) |c| {
+            //std.log.info("rect {},{} {}x{} c1={?} c2={}", .{x, y, width, height, draw_color1, c});
+            break :blk c;
+        }
+        if (draw_color1) |c| break :blk c;
+        return;
+    };
     var fb_bit_offset: usize = @as(usize, fb_rect.y) * fb_bit_stride + 2 * @as(usize, fb_rect.x);
 
     setPixels(fb, fb_bit_offset, border_color, fb_rect.width);
     fb_bit_offset += fb_bit_stride;
     for (1 .. fb_rect.height - 1) |_| {
         setPixel(fb, fb_bit_offset, border_color);
-        if (draw_color1 != 0 and fb_rect.width >= 3) {
-            setPixels(fb, fb_bit_offset + 2, @intCast(draw_color1 - 1), fb_rect.width - 2);
+        if (draw_color1) |color| {
+            if (fb_rect.width >= 3) {
+                setPixels(fb, fb_bit_offset + 2, color, fb_rect.width - 2);
+            }
         }
         if (fb_rect.width >= 2) {
             setPixel(fb, fb_bit_offset + 2*(fb_rect.width - 1), border_color);
@@ -264,9 +270,8 @@ fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {
             sprite_bit_offset += width * 2; // 2 bits per pixel
         }
     } else {
-        const draw_colors = mem[wasm4.draw_colors_addr];
-        const draw_color1: u3 = @intCast((draw_colors >> 0) % 5);
-        const draw_color2: u3 = @intCast((draw_colors >> 4) % 5);
+        const draw_color1 = wasm4.getDrawColor(mem, ._1);
+        const draw_color2 = wasm4.getDrawColor(mem, ._2);
 
         var sprite_bit_offset: usize =
             @as(usize, sprite_offset.y) * @as(usize, width) +
@@ -288,16 +293,16 @@ fn blitRow1bpp(
     dst: [*]u8, dst_bit_offset: usize,
     src: [*]const u8, src_bit_offset: usize,
     len: usize,
-    draw_color1: u3,
-    draw_color2: u3,
+    draw_color1: ?u2,
+    draw_color2: ?u2,
 ) void {
     for (0 .. len) |i| {
         const src_val: u8 = src[ (src_bit_offset + i) / 8 ];
         const shift: u3 = @intCast(((src_bit_offset + i) % 8));
         const src_bit = @as(u8, 1) << shift;
-        const color = if ((src_val & src_bit) == 0) draw_color1 else draw_color2;
-        if (color != 0) {
-            setPixel(dst, dst_bit_offset + 2*i, @intCast(color - 1));
+        const color_opt: ?u2 = if ((src_val & src_bit) == 0) draw_color1 else draw_color2;
+        if (color_opt) |c| {
+            setPixel(dst, dst_bit_offset + 2*i, c);
         }
     }
 }

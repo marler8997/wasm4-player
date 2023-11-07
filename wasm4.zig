@@ -13,6 +13,15 @@ pub fn clearFramebuffer(instance: zware.Instance) void {
     @memset(fb, 0);
 }
 
+pub const DrawColor = enum(u2) { _1, _2, _3, _4 };
+pub fn getDrawColor(mem: [*]const u8, color: DrawColor) ?u2 {
+    const draw_colors: *const align(1) u16 = @ptrCast(mem + draw_colors_addr);
+    const shift: u4 = @as(u4, @intFromEnum(color)) * 4;
+    const c = (0xf & (draw_colors.* >> shift)) % 5;
+    if (c == 0) return null;
+    return @intCast(c - 1);
+}
+
 pub const palette_addr = 0x4;
 pub const draw_colors_addr = 0x14;
 
