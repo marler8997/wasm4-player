@@ -203,15 +203,26 @@ fn rect(vm: *zware.VirtualMachine) zware.WasmError!void {
     const fb_rect = getFbRect(x, y, width, height) orelse return;
     const draw_colors = mem[wasm4.draw_colors_addr];
     const draw_color1: u3 = @intCast((draw_colors >> 0) % 5);
-    //const draw_color2: u3 = @intCast((draw_colors >> 4) % 5);
-    if (draw_color1 == 0) @panic("todo");
+    const draw_color2: u3 = @intCast((draw_colors >> 4) % 5);
+    if (draw_color1 == 0 and draw_color2 == 0) return;
+    const border_color: u2 = @intCast((if (draw_color2 == 0) draw_color1 else draw_color2) - 1);
 
     var fb_bit_offset: usize = @as(usize, fb_rect.y) * fb_bit_stride + 2 * @as(usize, fb_rect.x);
 
-    // TODO: need to draw the outline as well
-    for (0 .. fb_rect.height) |_| {
-        setPixels(fb, @intCast(fb_bit_offset), @intCast(draw_color1 - 1), fb_rect.width);
+    setPixels(fb, fb_bit_offset, border_color, fb_rect.width);
+    fb_bit_offset += fb_bit_stride;
+    for (1 .. fb_rect.height - 1) |_| {
+        setPixel(fb, fb_bit_offset, border_color);
+        if (draw_color1 != 0 and fb_rect.width >= 3) {
+            setPixels(fb, fb_bit_offset + 2, @intCast(draw_color1 - 1), fb_rect.width - 2);
+        }
+        if (fb_rect.width >= 2) {
+            setPixel(fb, fb_bit_offset + 2*(fb_rect.width - 1), border_color);
+        }
         fb_bit_offset += fb_bit_stride;
+    }
+    if (fb_rect.height >= 2) {
+        setPixels(fb, fb_bit_offset, border_color, fb_rect.width);
     }
 }
 
