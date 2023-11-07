@@ -1,4 +1,6 @@
+const builtin = @import("builtin");
 const std = @import("std");
+const ws2_32 = std.os.windows.ws2_32;
 const zware = @import("zware");
 const wasm4 = @import("wasm4.zig");
 const zigx = @import("x");
@@ -125,7 +127,13 @@ pub fn go(instance: *zware.Instance) !void {
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
 
-    {
+    if (builtin.os.tag == .windows) {
+        var mode: c_ulong = 1; // nonblocking
+        if (ws2_32.SOCKET_ERROR == ws2_32.ioctlsocket(conn.sock, ws2_32.FIONBIO, &mode)) {
+            std.log.err("ioctlsocket failed, error={s}", .{@tagName(ws2_32.WSAGetLastError())});
+            std.os.exit(0xff);
+        }
+    } else {
         const flags = try std.os.fcntl(conn.sock, std.os.F.GETFL, 0);
         std.log.info("socket flags 0x{x}", .{flags});
         _ = try std.os.fcntl(conn.sock, std.os.F.SETFL, flags | std.os.O.NONBLOCK);
@@ -337,7 +345,32 @@ fn render(
     }
 }
 
-fn waitSocketReadable(sock: std.os.socket_t, timeout: i32) !bool {
+const fd_set = extern struct {
+    fd_count: u32,
+    fd_array: [1]ws2_32.SOCKET,
+};
+const Timeval = struct { tv_sec: c_long, tv_usec: c_long };
+extern "ws2_32" fn select(
+    nfds: i32,
+    readfds: ?*fd_set,
+    writefds: ?*fd_set,
+    exceptfds: ?*fd_set,
+    timeout: ?*const Timeval,
+) callconv(std.os.windows.WINAPI) i32;
+
+fn waitSocketReadable(sock: std.os.socket_t, timeout: u31) !bool {
+    if (builtin.os.tag == .windows) {
+        const timeval = Timeval{
+            .tv_sec = @divTrunc(timeout, 1000),
+            .tv_usec = @intCast(1000 * @mod(timeout, 1000)),
+        };
+        var read_set = fd_set{ .fd_count = 1, .fd_array = [_]ws2_32.SOCKET{ sock } };
+        return switch (select(0, &read_set, null, null, &timeval)) {
+            0 => false, // timeout
+            1 => true,
+            else => std.debug.panic("select failed, error={s}", .{@tagName(ws2_32.WSAGetLastError())}),
+        };
+    }
     var pollfds = [_]std.os.pollfd{
         .{
             .fd = sock,
@@ -410,6 +443,7 @@ fn sendAll(sock: std.os.socket_t, data: []const u8) !void {
     while (total_sent != data.len) {
         const last_sent = zigx.writeSock(sock, data[total_sent..], 0) catch |err| switch (err) {
             error.WouldBlock => {
+                // TODO: maybe we should waitSocketWriteable?
                 std.time.sleep(std.time.ns_per_ms * 2); // sleep for 2 ms I guess?
                 continue;
             },
