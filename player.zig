@@ -215,17 +215,19 @@ fn rect(vm: *zware.VirtualMachine) zware.WasmError!void {
 
     setPixels(fb, fb_bit_offset, border_color, fb_rect.width);
     fb_bit_offset += fb_bit_stride;
-    for (1 .. fb_rect.height - 1) |_| {
-        setPixel(fb, fb_bit_offset, border_color);
-        if (draw_color1) |color| {
-            if (fb_rect.width >= 3) {
-                setPixels(fb, fb_bit_offset + 2, color, fb_rect.width - 2);
+    if (fb_rect.height >= 3) {
+        for (1 .. fb_rect.height - 1) |_| {
+            setPixel(fb, fb_bit_offset, border_color);
+            if (draw_color1) |color| {
+                if (fb_rect.width >= 3) {
+                    setPixels(fb, fb_bit_offset + 2, color, fb_rect.width - 2);
+                }
             }
+            if (fb_rect.width >= 2) {
+                setPixel(fb, fb_bit_offset + 2*(fb_rect.width - 1), border_color);
+            }
+            fb_bit_offset += fb_bit_stride;
         }
-        if (fb_rect.width >= 2) {
-            setPixel(fb, fb_bit_offset + 2*(fb_rect.width - 1), border_color);
-        }
-        fb_bit_offset += fb_bit_stride;
     }
     if (fb_rect.height >= 2) {
         setPixels(fb, fb_bit_offset, border_color, fb_rect.width);
