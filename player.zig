@@ -177,7 +177,12 @@ fn textCommon(mem: [*]u8, str: []const u8, x: i32, y: i32) void {
 
     var next_x: i32 = x;
     for (str) |c| {
-        if (c > font.len) {
+        if (c < 32) {
+            std.log.warn("unhandled control character 0x{x}", .{c});
+            continue;
+        }
+        const c_index = c - 32;
+        if (c_index > font.len) {
             std.log.warn("invalid text character 0x{x}", .{c});
             continue;
         }
@@ -187,7 +192,7 @@ fn textCommon(mem: [*]u8, str: []const u8, x: i32, y: i32) void {
             blit1bpp(
                 fb, fb_bit_start,
                 8, 8,
-                &font[c], 0, 8,
+                &font[c_index], 0, 8,
                 bg_color, fg_color,
             );
         }
