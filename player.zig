@@ -2,6 +2,7 @@ const builtin = @import("builtin");
 const std = @import("std");
 const zware = @import("zware");
 const wasm4 = @import("wasm4.zig");
+const font = @import("font.zig").font;
 
 const MappedFile = @import("MappedFile.zig");
 
@@ -170,8 +171,28 @@ fn XY(comptime T: type) type { return struct { x: T, y: T }; }
 fn Rect(comptime T: type) type { return struct { x: T, y: T, width: T, height: T }; }
 
 fn textCommon(mem: [*]u8, str: []const u8, x: i32, y: i32) void {
-    _ = mem;
-    std.log.info("todo: implement text {}x{} '{s}'", .{x, y, str});
+    const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
+    const fg_color = wasm4.getDrawColor(mem, ._1);
+    const bg_color = wasm4.getDrawColor(mem, ._2);
+
+    var next_x: i32 = x;
+    for (str) |c| {
+        if (c > font.len) {
+            std.log.warn("invalid text character 0x{x}", .{c});
+            continue;
+        }
+
+        if (getFbRect(next_x, y, 8, 8)) |fb_rect| {
+            const fb_bit_start: usize = @as(usize, fb_rect.y) * fb_bit_stride + 2 * @as(usize, fb_rect.x);
+            blit1bpp(
+                fb, fb_bit_start,
+                8, 8,
+                &font[c], 0, 8,
+                bg_color, fg_color,
+            );
+        }
+        next_x += 8;
+    }
 }
 
 pub fn text(vm: *zware.VirtualMachine) zware.WasmError!void {
@@ -185,9 +206,13 @@ pub fn text(vm: *zware.VirtualMachine) zware.WasmError!void {
 }
 
 pub fn textUtf8(vm: *zware.VirtualMachine) zware.WasmError!void {
-    _ = vm;
-    // TODO: get args and call textCommon
-    std.log.warn("todo: implement textUtf8", .{});
+    const y = vm.popOperand(i32);
+    const x = vm.popOperand(i32);
+    const str_len: usize = @intCast(vm.popAnyOperand());
+    const str_addr: usize = @intCast(vm.popAnyOperand());
+
+    const mem = wasm4.getMem(vm.inst.*);
+    textCommon(mem, (mem + str_addr)[0 .. str_len], x, y);
 }
 
 fn getFbRect(x: i32, y: i32, width: u32, height: u32) ?Rect(u8) {
@@ -285,7 +310,7 @@ fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {
             @as(usize, sprite_offset.x) * 2;
         for (0 .. fb_rect.height) |_| {
             bitcpy(
-                fb, @intCast(fb_bit_offset),
+                fb, fb_bit_offset,
                 sprite_ptr, sprite_bit_offset,
                 fb_rect.width * 2,
             );
@@ -293,22 +318,37 @@ fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {
             sprite_bit_offset += width * 2; // 2 bits per pixel
         }
     } else {
-        const draw_color1 = wasm4.getDrawColor(mem, ._1);
-        const draw_color2 = wasm4.getDrawColor(mem, ._2);
-
-        var sprite_bit_offset: usize =
+        const sprite_bit_start: usize =
             @as(usize, sprite_offset.y) * @as(usize, width) +
             @as(usize, sprite_offset.x);
-        for (0 .. fb_rect.height) |_| {
-            blitRow1bpp(
-                fb, @intCast(fb_bit_offset),
-                sprite_ptr, sprite_bit_offset,
-                fb_rect.width,
-                draw_color1, draw_color2,
-            );
-            fb_bit_offset += fb_bit_stride;
-            sprite_bit_offset += width;
-        }
+        blit1bpp(
+            fb, fb_bit_offset,
+            fb_rect.width, fb_rect.height,
+            sprite_ptr, sprite_bit_start,
+            width,
+            wasm4.getDrawColor(mem, ._1),
+            wasm4.getDrawColor(mem, ._2),
+        );
+    }
+}
+
+fn blit1bpp(
+    fb: *[wasm4.framebuffer_len]u8, fb_bit_start: usize,
+    width: u8, height: u8,
+    sprite: [*]const u8, sprite_bit_start: usize, sprite_stride: usize,
+    color1: ?u2, color2: ?u2,
+) void {
+    var fb_bit_offset = fb_bit_start;
+    var sprite_bit_offset = sprite_bit_start;
+    for (0 .. height) |_| {
+        blitRow1bpp(
+            fb, fb_bit_offset,
+            sprite, sprite_bit_offset,
+            width,
+            color1, color2,
+        );
+        fb_bit_offset += fb_bit_stride;
+        sprite_bit_offset += sprite_stride;
     }
 }
 
@@ -322,7 +362,7 @@ fn blitRow1bpp(
     for (0 .. len) |i| {
         const src_val: u8 = src[ (src_bit_offset + i) / 8 ];
         const shift: u3 = @intCast(((src_bit_offset + i) % 8));
-        const src_bit = @as(u8, 1) << shift;
+        const src_bit = @as(u8, 0x80) >> shift;
         const color_opt: ?u2 = if ((src_val & src_bit) == 0) draw_color1 else draw_color2;
         if (color_opt) |c| {
             setPixel(dst, dst_bit_offset + 2*i, c);
