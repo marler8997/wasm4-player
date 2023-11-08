@@ -105,8 +105,7 @@ pub fn main() !void {
 fn wasm4InitStore(store: *zware.Store) !void {
     try store.exposeMemory("env", "memory", 1, 1);
 
-    // TODO: zware can't do varargs yet?
-    //try store.exposeHostFunction("env", "tracef", tracef, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "tracef", tracef, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "trace", trace, &[_]zware.ValType{ .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "traceUtf8", traceUtf8, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "text", text, &[_]zware.ValType{ .I32, .I32, .I32 }, &[_]zware.ValType{ });
@@ -149,9 +148,13 @@ fn wasm4InitInstance(instance: zware.Instance) !void {
 }
 
 fn tracef(vm: *zware.VirtualMachine) zware.WasmError!void {
-    //const str_addr: usize = @intCast(vm.popAnyOperand());
-    _ = vm;
-    std.log.warn("todo: tracef", .{});
+    const stack_addr: usize = @intCast(vm.popAnyOperand());
+    const fmt_addr: usize = @intCast(vm.popAnyOperand());
+
+    const mem = wasm4.getMem(vm.inst.*);
+    const fmt: [*:0]const u8 = @ptrCast(mem + fmt_addr);
+    _ = stack_addr;
+    std.log.warn("todo: tracef fmt='{s}'", .{fmt});
 }
 
 fn trace(vm: *zware.VirtualMachine) zware.WasmError!void {
