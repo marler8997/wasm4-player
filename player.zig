@@ -109,6 +109,11 @@ fn wasm4InitStore(store: *zware.Store) !void {
     try store.exposeHostFunction("env", "trace", trace, &[_]zware.ValType{ .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "traceUtf8", traceUtf8, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "text", text, &[_]zware.ValType{ .I32, .I32, .I32 }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "textUtf8", textUtf8, &[_]zware.ValType{
+        .I32, // str
+        .I32, .I32, // x, y
+        .I32, // ?
+    }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "rect", rect, &[_]zware.ValType{ .I32, .I32, .I32, .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "blit", blit, &[_]zware.ValType{
         .I32, // sprite_ptr
@@ -123,11 +128,6 @@ fn wasm4InitStore(store: *zware.Store) !void {
         .I32, .I32, // srcX, srcY
         .I32, // stride
         .I32, // flags
-    }, &[_]zware.ValType{ });
-    try store.exposeHostFunction("env", "textUtf8", blit, &[_]zware.ValType{
-        .I32, // str
-        .I32, .I32, // x, y
-        .I32, // ?
     }, &[_]zware.ValType{ });
 }
 fn wasm4InitInstance(instance: zware.Instance) !void {
@@ -169,14 +169,25 @@ const fb_bit_stride = 160 * 2; // 2 bits per pixel
 fn XY(comptime T: type) type { return struct { x: T, y: T }; }
 fn Rect(comptime T: type) type { return struct { x: T, y: T, width: T, height: T }; }
 
+fn textCommon(mem: [*]u8, str: []const u8, x: i32, y: i32) void {
+    _ = mem;
+    std.log.info("todo: implement text {}x{} '{s}'", .{x, y, str});
+}
+
 pub fn text(vm: *zware.VirtualMachine) zware.WasmError!void {
     const y = vm.popOperand(i32);
     const x = vm.popOperand(i32);
     const str_addr: usize = @intCast(vm.popAnyOperand());
-    _ = y;
-    _ = x;
-    _ = str_addr;
-    std.log.warn("todo: implement text", .{});
+
+    const mem = wasm4.getMem(vm.inst.*);
+    const str = std.mem.span(@as([*:0]u8, @ptrCast(mem + str_addr)));
+    textCommon(mem, str, x, y);
+}
+
+pub fn textUtf8(vm: *zware.VirtualMachine) zware.WasmError!void {
+    _ = vm;
+    // TODO: get args and call textCommon
+    std.log.warn("todo: implement textUtf8", .{});
 }
 
 fn getFbRect(x: i32, y: i32, width: u32, height: u32) ?Rect(u8) {
