@@ -130,6 +130,8 @@ fn wasm4InitStore(store: *zware.Store) !void {
         .I32, // stride
         .I32, // flags
     }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "tone", diskr, &[_]zware.ValType{ .I32, .I32, .I32, .I32 }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "diskr", diskr, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ });
 }
 fn wasm4InitInstance(instance: zware.Instance) !void {
     const mem = wasm4.getMem(instance);
@@ -406,7 +408,6 @@ fn bitcpy(dst: [*]u8, dst_off: usize, src: [*]const u8, src_off: usize, len: usi
             dst_val | src_bit
         else
             dst_val & ~src_bit;
-        std.log.info("dst {} from 0x{x} to 0x{x}", .{(dst_off + i)/8, dst_val, new_val});
         dst[ (dst_off + i) / 8 ] = new_val;
     }
 }
@@ -414,4 +415,24 @@ fn bitcpy(dst: [*]u8, dst_off: usize, src: [*]const u8, src_off: usize, len: usi
 fn blitSub(vm: *zware.VirtualMachine) zware.WasmError!void {
     _ = vm;
     @panic("todo: blitSub");
+}
+
+fn tone(vm: *zware.VirtualMachine) zware.WasmError!void {
+    const flags = vm.popOperand(u32);
+    const volume = vm.popOperand(u32);
+    const dur = vm.popOperand(u32);
+    const freq = vm.popOperand(u32);
+    _ = freq;
+    _ = dur;
+    _ = volume;
+    _ = flags;
+    std.log.warn("todo: implement tone", .{});
+}
+
+fn diskr(vm: *zware.VirtualMachine) zware.WasmError!void {
+    const size = vm.popOperand(u32);
+    const dest = vm.popOperand(u32);
+    _ = size;
+    _ = dest;
+    std.log.warn("todo: implement diskr", .{});
 }
