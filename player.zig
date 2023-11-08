@@ -115,7 +115,11 @@ fn wasm4InitStore(store: *zware.Store) !void {
         .I32, .I32, // x, y
         .I32, // ?
     }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "hline", hline, &[_]zware.ValType{ .I32, .I32, .I32 }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "vline", vline, &[_]zware.ValType{ .I32, .I32, .I32 }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "line", line, &[_]zware.ValType{ .I32, .I32, .I32, .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "rect", rect, &[_]zware.ValType{ .I32, .I32, .I32, .I32 }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "oval", oval, &[_]zware.ValType{ .I32, .I32, .I32, .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "blit", blit, &[_]zware.ValType{
         .I32, // sprite_ptr
         .I32, .I32, // x, y
@@ -243,6 +247,41 @@ fn getFbRect(x: i32, y: i32, width: u32, height: u32) ?Rect(u8) {
     };
 }
 
+fn hline(vm: *zware.VirtualMachine) zware.WasmError!void {
+    const len = vm.popOperand(u32);
+    const y = vm.popOperand(i32);
+    const x = vm.popOperand(i32);
+
+    const mem = wasm4.getMem(vm.inst.*);
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // TODO: do we need to popOperands if we're just going to return early?
+    const color = wasm4.getDrawColor(mem, ._1) orelse return;
+    std.log.info("todo: hline {},{} len={} color={}", .{x, y, len, color});
+}
+
+fn vline(vm: *zware.VirtualMachine) zware.WasmError!void {
+    const len = vm.popOperand(u32);
+    const y = vm.popOperand(i32);
+    const x = vm.popOperand(i32);
+
+    const mem = wasm4.getMem(vm.inst.*);
+    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+    // TODO: do we need to popOperands if we're just going to return early?
+    const color = wasm4.getDrawColor(mem, ._1) orelse return;
+    std.log.info("todo: vline {},{} len={} color={}", .{x, y, len, color});
+}
+
+fn line(vm: *zware.VirtualMachine) zware.WasmError!void {
+    const y2 = vm.popOperand(i32);
+    const x2 = vm.popOperand(i32);
+    const y1 = vm.popOperand(i32);
+    const x1 = vm.popOperand(i32);
+
+    const mem = wasm4.getMem(vm.inst.*);
+    const color = wasm4.getDrawColor(mem, ._1) orelse return;
+    std.log.info("todo: line {},{} {},{} color={}", .{x1, y1, x2, y2, color});
+}
+
 fn rect(vm: *zware.VirtualMachine) zware.WasmError!void {
     const mem = wasm4.getMem(vm.inst.*);
     const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
@@ -285,6 +324,11 @@ fn rect(vm: *zware.VirtualMachine) zware.WasmError!void {
     if (fb_rect.height >= 2) {
         setPixels(fb, fb_bit_offset, border_color, fb_rect.width);
     }
+}
+
+fn oval(vm: *zware.VirtualMachine) zware.WasmError!void {
+    std.log.warn("oval not implemented, using rect instead", .{});
+    return rect(vm);
 }
 
 const BLIT_2BPP = 1;
