@@ -315,11 +315,18 @@ fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {
         var sprite_bit_offset: usize =
             @as(usize, sprite_offset.y) * @as(usize, width) * 2 +
             @as(usize, sprite_offset.x) * 2;
+        const colors = [4]?u2{
+            wasm4.getDrawColor(mem, ._1),
+            wasm4.getDrawColor(mem, ._2),
+            wasm4.getDrawColor(mem, ._3),
+            wasm4.getDrawColor(mem, ._4),
+        };
         for (0 .. fb_rect.height) |_| {
-            bitcpy(
+            blitRow2bpp(
                 fb, fb_bit_offset,
                 sprite_ptr, sprite_bit_offset,
-                fb_rect.width * 2,
+                fb_rect.width,
+                colors,
             );
             fb_bit_offset += fb_bit_stride;
             sprite_bit_offset += width * 2; // 2 bits per pixel
@@ -377,6 +384,25 @@ fn blitRow1bpp(
     }
 }
 
+fn blitRow2bpp(
+    dst: [*]u8, dst_bit_offset: usize,
+    src: [*]const u8, src_bit_offset: usize,
+    len: usize,
+    colors: [4]?u2,
+) void {
+    for (0 .. len) |i| {
+        const color = colors[getPixel(src, src_bit_offset + 2*i)] orelse continue;
+        setPixel(dst, dst_bit_offset + 2*i, color);
+    }
+}
+
+fn getPixel(ptr: [*]const u8, bit_offset: usize) u2 {
+    if (bit_offset % 2 != 0) unreachable;
+    const val = ptr[bit_offset / 8];
+    const shift: u3 = @intCast(6 - 2 * ((bit_offset/2) % 4));
+    return @intCast(0x3 & (val >> shift));
+}
+
 fn setPixel(dst: [*]u8, bit_offset: usize, color: u2) void {
     if (bit_offset % 2 != 0) unreachable;
 
@@ -396,21 +422,6 @@ fn setPixels(dst: [*]u8, bit_offset: usize, color: u2, len: u8) void {
     }
 }
 
-
-// TODO: this could be more efficient if aligned
-fn bitcpy(dst: [*]u8, dst_off: usize, src: [*]const u8, src_off: usize, len: usize) void {
-    for (0 .. len) |i| {
-        var dst_val: u8 = dst[ (dst_off + i) / 8 ];
-        const src_val: u8 = src[ (src_off + i) / 8 ];
-        const src_bit = @as(u8, 1) << @as(u3, @intCast(((src_off + i) % 8)));
-
-        const new_val: u8 = if ((src_val & src_bit) != 0)
-            dst_val | src_bit
-        else
-            dst_val & ~src_bit;
-        dst[ (dst_off + i) / 8 ] = new_val;
-    }
-}
 
 fn blitSub(vm: *zware.VirtualMachine) zware.WasmError!void {
     _ = vm;
