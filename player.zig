@@ -114,6 +114,7 @@ fn wasm4InitStore(store: *zware.Store) !void {
         .I32, .I32, // x, y
         .I32, // ?
     }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "textUtf16", textUtf16, &[_]zware.ValType{ .I32, .I32, .I32, .I32 }, &[_]zware.ValType{});
     try store.exposeHostFunction("env", "hline", hline, &[_]zware.ValType{ .I32, .I32, .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "vline", vline, &[_]zware.ValType{ .I32, .I32, .I32 }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "line", line, &[_]zware.ValType{ .I32, .I32, .I32, .I32 }, &[_]zware.ValType{ });
@@ -148,22 +149,70 @@ fn wasm4InitInstance(instance: zware.Instance) !void {
     mem[wasm4.draw_colors_addr + 1] = 0x12;
 }
 
+fn onTraceError(e: anytype) noreturn {
+    std.debug.panic("trace to stderr failed with {s}", .{@errorName(e)});
+}
+
 fn tracef(vm: *zware.VirtualMachine) zware.WasmError!void {
     const stack_addr: usize = @intCast(vm.popAnyOperand());
     const fmt_addr: usize = @intCast(vm.popAnyOperand());
 
     const mem = wasm4.getMem(vm.inst.*);
     const fmt: [*:0]const u8 = @ptrCast(mem + fmt_addr);
-    _ = stack_addr;
-    std.log.warn("todo: tracef fmt='{s}'", .{fmt});
+    const stderr = std.io.getStdErr().writer();
+    var bw = std.io.bufferedWriter(stderr);
+
+    const stack: [*]align(1) u32 = @ptrCast(mem + stack_addr);
+    var stack_offset: usize = 0;
+    var last_flush_index: usize = 0;
+    var i: usize = 0;
+    while (true) : (i += 1) {
+        if (fmt[i] != 0 and fmt[i] != '%')
+            continue;
+
+        bw.writer().writeAll(fmt[last_flush_index..i]) catch |e| onTraceError(e);
+        last_flush_index = i;
+        if (fmt[i] == 0)
+            break;
+
+        i += 1;
+        last_flush_index = i + 1;
+        switch (fmt[i]) {
+            'c' => @panic("todo"),
+            'd' => {
+                const value: i32 = @bitCast(stack[stack_offset]);
+                stack_offset += 1;
+                bw.writer().print("{}", .{value}) catch |e| onTraceError(e);
+            },
+            'f' => @panic("todo"),
+            's' => {
+                const str_addr = stack[stack_offset];
+                stack_offset += 1;
+                const str_ptr: [*:0]const u8 = @ptrCast(mem + str_addr);
+                bw.writer().writeAll(std.mem.span(str_ptr)) catch |e| onTraceError(e);
+            },
+            'x' => @panic("todo"),
+            0 => {
+                std.log.err("tracef format string ended with dangling '%'", .{});
+                i -= 1;
+                last_flush_index = i;
+            },
+            else => |spec| {
+                i -= 1;
+                last_flush_index = i-1;
+                std.log.err("tracef unknown format specifier '{c}'", .{spec});
+            },
+        }
+    }
+    bw.writer().writeAll("\n") catch |e| onTraceError(e);
+    bw.flush() catch |e| onTraceError(e);
 }
 
 fn trace(vm: *zware.VirtualMachine) zware.WasmError!void {
     const str_addr = vm.popOperand(u32);
     const mem = wasm4.getMem(vm.inst.*);
     const str_ptr = @as([*:0]u8, @ptrCast(mem + str_addr));
-    std.io.getStdErr().writer().print("{s}\n", .{str_ptr}) catch |err|
-        std.debug.panic("log to stderr failed with {s}", .{@errorName(err)});
+    std.io.getStdErr().writer().print("{s}\n", .{str_ptr}) catch |e| onTraceError(e);
 }
 
 fn traceUtf8(vm: *zware.VirtualMachine) zware.WasmError!void {
@@ -171,8 +220,7 @@ fn traceUtf8(vm: *zware.VirtualMachine) zware.WasmError!void {
     const str_addr = vm.popOperand(u32);
     const mem = wasm4.getMem(vm.inst.*);
     const slice = (mem + str_addr)[0 .. str_len];
-    std.io.getStdErr().writer().print("{s}\n", .{slice}) catch |err|
-        std.debug.panic("log to stderr failed with {s}", .{@errorName(err)});
+    std.io.getStdErr().writer().print("{s}\n", .{slice}) catch |e| onTraceError(e);
 }
 
 const fb_bit_stride = 160 * 2; // 2 bits per pixel
@@ -228,6 +276,11 @@ pub fn textUtf8(vm: *zware.VirtualMachine) zware.WasmError!void {
 
     const mem = wasm4.getMem(vm.inst.*);
     textCommon(mem, (mem + str_addr)[0 .. str_len], x, y);
+}
+
+pub fn textUtf16(vm: *zware.VirtualMachine) zware.WasmError!void {
+    _ = vm;
+    std.log.warn("textUtf816 not implemented", .{});
 }
 
 fn getFbRect(x: i32, y: i32, width: u32, height: u32) ?Rect(u8) {
@@ -520,18 +573,29 @@ fn tone(vm: *zware.VirtualMachine) zware.WasmError!void {
     std.log.warn("todo: implement tone", .{});
 }
 
+// TODO: implement actually storing things on the disk
+var global_disk_buf: [1024]u8 = undefined;
+var global_disk_len: u32 = 0;
+
 fn diskr(vm: *zware.VirtualMachine) zware.WasmError!void {
     const size = vm.popOperand(u32);
-    const dest = vm.popOperand(u32);
-    std.log.warn("todo: implement diskr (dest={} size={})", .{dest, size});
-    try vm.pushOperand(u32, 0);
+    const dst = vm.popOperand(u32);
+
+    const mem = wasm4.getMem(vm.inst.*);
+
+    const copy_len: u32 = @min(size, global_disk_len);
+    @memcpy(mem[dst..][0 .. copy_len], global_disk_buf[0 .. copy_len]);
+    try vm.pushOperand(u32, copy_len);
 }
 
 fn diskw(vm: *zware.VirtualMachine) zware.WasmError!void {
     const size = vm.popOperand(u32);
     const src = vm.popOperand(u32);
-    _ = size;
-    _ = src;
-    std.log.warn("todo: implement diskw", .{});
-    try vm.pushOperand(u32, 0);
+
+    const mem = wasm4.getMem(vm.inst.*);
+
+    const copy_len: u32 = @min(size, 1024);
+    @memcpy(global_disk_buf[0 .. copy_len], mem[src..][0 .. copy_len]);
+    global_disk_len = copy_len;
+    try vm.pushOperand(u32, copy_len);
 }
