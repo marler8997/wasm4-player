@@ -238,9 +238,18 @@ fn textCommon(mem: [*]u8, str: []const u8, x: i32, y: i32) void {
     const bg_color = wasm4.getDrawColor(mem, ._2);
 
     var next_x: i32 = x;
+    var next_y: i32 = y;
     for (str) |c| {
         if (c < 32) {
-            std.log.warn("unhandled control character 0x{x}", .{c});
+            if (c == 0) {
+                std.log.warn("unexpected null-terminator", .{});
+                return;
+            } else if (c == '\n') {
+                next_x = x;
+                next_y += 8;
+            } else {
+                std.log.warn("unhandled control character 0x{x}", .{c});
+            }
             continue;
         }
         const c_index = c - 32;
@@ -249,12 +258,21 @@ fn textCommon(mem: [*]u8, str: []const u8, x: i32, y: i32) void {
             continue;
         }
 
-        if (getFbRect(next_x, y, 8, 8)) |fb_rect| {
+        if (getFbRect(next_x, next_y, 8, 8)) |fb_rect| {
+            const sprite_offset = XY(u32){
+                .x = @as(u32, @intCast(fb_rect.x - next_x)),
+                .y = @as(u32, @intCast(fb_rect.y - next_y)),
+            };
             const fb_bit_start: usize = @as(usize, fb_rect.y) * fb_bit_stride + 2 * @as(usize, fb_rect.x);
+            const sprite_bit_start: usize =
+                @as(usize, sprite_offset.y) * 8 +
+                @as(usize, sprite_offset.x);
             blit1bpp(
                 fb, fb_bit_start,
-                8, 8,
-                &font[c_index], 0, 8,
+                fb_rect.width, fb_rect.height,
+                @as([*]const u8, &font[c_index]),
+                sprite_bit_start,
+                8,
                 bg_color, fg_color,
             );
         }
@@ -284,7 +302,7 @@ pub fn textUtf8(vm: *zware.VirtualMachine) zware.WasmError!void {
 
 pub fn textUtf16(vm: *zware.VirtualMachine) zware.WasmError!void {
     _ = vm;
-    std.log.warn("textUtf816 not implemented", .{});
+    std.log.warn("textUtf16 not implemented", .{});
 }
 
 // Reference Implementation Issue:
