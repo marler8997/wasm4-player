@@ -125,7 +125,7 @@ fn wasm4InitStore(store: *zware.Store) !void {
         .I32, .I32, // width, height
         .I32, // flags
     }, &[_]zware.ValType{ });
-    try store.exposeHostFunction("env", "blitSub", blit, &[_]zware.ValType{
+    try store.exposeHostFunction("env", "blitSub", blitSub, &[_]zware.ValType{
         .I32, // sprite_ptr
         .I32, .I32, // x, y
         .I32, .I32, // width, height
@@ -334,31 +334,32 @@ fn oval(vm: *zware.VirtualMachine) zware.WasmError!void {
 
 const BLIT_2BPP = 1;
 
-fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {
-    const mem = wasm4.getMem(vm.inst.*);
+fn blitCommon(
+    mem: [*]u8,
+    sprite: [*]const u8,
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+    src_x: u32,
+    src_y: u32,
+    sprite_stride: u32,
+    flags: u32,
+) void {
     const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
 
-    const flags = vm.popOperand(u32);
-    const height = vm.popOperand(u32);
-    const width = vm.popOperand(u32);
-    const y = vm.popOperand(i32);
-    const x = vm.popOperand(i32);
-    const sprite_addr: usize = @intCast(vm.popAnyOperand());
-
     //std.log.info("blit ptr={} pos={},{} size={}x{} flags=0x{x}", .{sprite_addr, x, y, width, height, flags});
-    const sprite_ptr = mem + sprite_addr;
-
     const fb_rect = getFbRect(x, y, width, height) orelse return;
-    const sprite_offset = XY(u8){
-        .x = @intCast(fb_rect.x - x),
-        .y = @intCast(fb_rect.y - y),
+    const sprite_offset = XY(u32){
+        .x = src_x + @as(u32, @intCast(fb_rect.x - x)),
+        .y = src_y + @as(u32, @intCast(fb_rect.y - y)),
     };
 
     var fb_bit_offset: usize = @as(usize, fb_rect.y) * fb_bit_stride + 2 * @as(usize, fb_rect.x);
 
     if ((flags & BLIT_2BPP) != 0) {
         var sprite_bit_offset: usize =
-            @as(usize, sprite_offset.y) * @as(usize, width) * 2 +
+            @as(usize, sprite_offset.y) * @as(usize, sprite_stride) * 2 +
             @as(usize, sprite_offset.x) * 2;
         const colors = [4]?u2{
             wasm4.getDrawColor(mem, ._1),
@@ -369,26 +370,66 @@ fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {
         for (0 .. fb_rect.height) |_| {
             blitRow2bpp(
                 fb, fb_bit_offset,
-                sprite_ptr, sprite_bit_offset,
+                sprite, sprite_bit_offset,
                 fb_rect.width,
                 colors,
             );
             fb_bit_offset += fb_bit_stride;
-            sprite_bit_offset += width * 2; // 2 bits per pixel
+            sprite_bit_offset += sprite_stride * 2; // 2 bits per pixel
         }
     } else {
         const sprite_bit_start: usize =
-            @as(usize, sprite_offset.y) * @as(usize, width) +
+            @as(usize, sprite_offset.y) * @as(usize, sprite_stride) +
             @as(usize, sprite_offset.x);
         blit1bpp(
             fb, fb_bit_offset,
             fb_rect.width, fb_rect.height,
-            sprite_ptr, sprite_bit_start,
-            width,
+            sprite, sprite_bit_start, sprite_stride,
             wasm4.getDrawColor(mem, ._1),
             wasm4.getDrawColor(mem, ._2),
         );
     }
+}
+
+fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {
+    const flags = vm.popOperand(u32);
+    const height = vm.popOperand(u32);
+    const width = vm.popOperand(u32);
+    const y = vm.popOperand(i32);
+    const x = vm.popOperand(i32);
+    const sprite_addr: usize = @intCast(vm.popAnyOperand());
+    const mem = wasm4.getMem(vm.inst.*);
+    blitCommon(
+        mem,
+        mem + sprite_addr,
+        x, y,
+        width, height,
+        0, 0, // src x/y
+        width,
+        flags,
+    );
+}
+
+fn blitSub(vm: *zware.VirtualMachine) zware.WasmError!void {
+    const flags = vm.popOperand(u32);
+    const stride = vm.popOperand(u32);
+    const src_y = vm.popOperand(u32);
+    const src_x = vm.popOperand(u32);
+    const height = vm.popOperand(u32);
+    const width = vm.popOperand(u32);
+    const y = vm.popOperand(i32);
+    const x = vm.popOperand(i32);
+    const sprite_addr: usize = @intCast(vm.popAnyOperand());
+    const mem = wasm4.getMem(vm.inst.*);
+    blitCommon(
+        mem,
+        mem + sprite_addr,
+        x, y,
+        width, height,
+        src_x, src_y,
+        stride,
+        flags,
+    );
 }
 
 fn blit1bpp(
@@ -467,12 +508,6 @@ fn setPixels(dst: [*]u8, bit_offset: usize, color: u2, len: u8) void {
     }
 }
 
-
-fn blitSub(vm: *zware.VirtualMachine) zware.WasmError!void {
-    _ = vm;
-    @panic("todo: blitSub");
-}
-
 fn tone(vm: *zware.VirtualMachine) zware.WasmError!void {
     const flags = vm.popOperand(u32);
     const volume = vm.popOperand(u32);
@@ -488,10 +523,7 @@ fn tone(vm: *zware.VirtualMachine) zware.WasmError!void {
 fn diskr(vm: *zware.VirtualMachine) zware.WasmError!void {
     const size = vm.popOperand(u32);
     const dest = vm.popOperand(u32);
-
-    _ = size;
-    _ = dest;
-    std.log.warn("todo: implement diskr", .{});
+    std.log.warn("todo: implement diskr (dest={} size={})", .{dest, size});
     try vm.pushOperand(u32, 0);
 }
 
@@ -500,6 +532,6 @@ fn diskw(vm: *zware.VirtualMachine) zware.WasmError!void {
     const src = vm.popOperand(u32);
     _ = size;
     _ = src;
-    std.log.warn("todo: implement disk2", .{});
+    std.log.warn("todo: implement diskw", .{});
     try vm.pushOperand(u32, 0);
 }
