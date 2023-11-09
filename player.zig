@@ -314,10 +314,11 @@ fn hline(vm: *zware.VirtualMachine) zware.WasmError!void {
     const x = vm.popOperand(i32);
 
     const mem = wasm4.getMem(vm.inst.*);
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // TODO: do we need to popOperands if we're just going to return early?
     const color = wasm4.getDrawColor(mem, ._1) orelse return;
-    std.log.info("todo: hline {},{} len={} color={}", .{x, y, len, color});
+    const fb_rect = getFbRect(x, y, len, 1) orelse return;
+    const fb_bit_offset: usize = @as(usize, fb_rect.y) * fb_bit_stride + 2 * @as(usize, fb_rect.x);
+    const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
+    setPixels(fb, fb_bit_offset, color, fb_rect.width);
 }
 
 fn vline(vm: *zware.VirtualMachine) zware.WasmError!void {
@@ -326,10 +327,14 @@ fn vline(vm: *zware.VirtualMachine) zware.WasmError!void {
     const x = vm.popOperand(i32);
 
     const mem = wasm4.getMem(vm.inst.*);
-    // !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-    // TODO: do we need to popOperands if we're just going to return early?
     const color = wasm4.getDrawColor(mem, ._1) orelse return;
-    std.log.info("todo: vline {},{} len={} color={}", .{x, y, len, color});
+    const fb_rect = getFbRect(x, y, 1, len) orelse return;
+    const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
+    var fb_bit_offset: usize = @as(usize, fb_rect.y) * fb_bit_stride + 2 * @as(usize, fb_rect.x);
+    for (0 .. fb_rect.height) |_| {
+        setPixel(fb, fb_bit_offset, color);
+        fb_bit_offset += fb_bit_stride;
+    }
 }
 
 fn line(vm: *zware.VirtualMachine) zware.WasmError!void {
