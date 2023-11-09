@@ -32,6 +32,8 @@ pub const framebuffer_stride = 40; // 160 * 2 (bits per pixel) / 8 (bits per byt
 
 pub const pixels_per_byte = 4;
 
+pub const blit_flip_x = 0b0010;
+
 pub const button_1:     u8 = 0b00000001;
 pub const button_2:     u8 = 0b00000010;
 pub const button_left:  u8 = 0b00010000;

@@ -273,6 +273,7 @@ fn textCommon(mem: [*]u8, str: []const u8, x: i32, y: i32) void {
                 @as([*]const u8, &font[c_index]),
                 sprite_bit_start,
                 8,
+                false, // flip x
                 bg_color, fg_color,
             );
         }
@@ -479,6 +480,7 @@ fn blitCommon(
         .y = src_y + @as(u32, @intCast(fb_rect.y - y)),
     };
 
+    const flip_x = (flags & wasm4.blit_flip_x) != 0;
     var fb_bit_offset: usize = @as(usize, fb_rect.y) * fb_bit_stride + 2 * @as(usize, fb_rect.x);
 
     if ((flags & BLIT_2BPP) != 0) {
@@ -502,13 +504,15 @@ fn blitCommon(
             sprite_bit_offset += sprite_stride * 2; // 2 bits per pixel
         }
     } else {
+        const sprite_bit_x_offset = if (flip_x) 0 else @as(usize, sprite_offset.x);
         const sprite_bit_start: usize =
             @as(usize, sprite_offset.y) * @as(usize, sprite_stride) +
-            @as(usize, sprite_offset.x);
+            sprite_bit_x_offset;
         blit1bpp(
             fb, fb_bit_offset,
             fb_rect.width, fb_rect.height,
             sprite, sprite_bit_start, sprite_stride,
+            flip_x,
             wasm4.getDrawColor(mem, ._1),
             wasm4.getDrawColor(mem, ._2),
         );
@@ -560,6 +564,7 @@ fn blit1bpp(
     fb: *[wasm4.framebuffer_len]u8, fb_bit_start: usize,
     width: u8, height: u8,
     sprite: [*]const u8, sprite_bit_start: usize, sprite_stride: usize,
+    flip_x: bool,
     color1: ?u2, color2: ?u2,
 ) void {
     var fb_bit_offset = fb_bit_start;
@@ -568,7 +573,7 @@ fn blit1bpp(
         blitRow1bpp(
             fb, fb_bit_offset,
             sprite, sprite_bit_offset,
-            width,
+            width, flip_x,
             color1, color2,
         );
         fb_bit_offset += fb_bit_stride;
@@ -577,20 +582,29 @@ fn blit1bpp(
 }
 
 fn blitRow1bpp(
-    dst: [*]u8, dst_bit_offset: usize,
-    src: [*]const u8, src_bit_offset: usize,
+    dst: [*]u8, dst_bit_start: usize,
+    src: [*]const u8, src_bit_start: usize,
     len: usize,
+    flip_x: bool,
     draw_color1: ?u2,
     draw_color2: ?u2,
 ) void {
+    var dst_bit_offset: isize = @intCast(dst_bit_start);
+    var bit_inc: i32 = 2;
+    if (flip_x) {
+        dst_bit_offset += 2 * (@as(isize, @intCast(len)) - 1);
+        bit_inc = -2;
+    }
+
     for (0 .. len) |i| {
-        const src_val: u8 = src[ (src_bit_offset + i) / 8 ];
-        const shift: u3 = @intCast(((src_bit_offset + i) % 8));
+        const src_val: u8 = src[ (src_bit_start + i) / 8 ];
+        const shift: u3 = @intCast((src_bit_start + i) % 8);
         const src_bit = @as(u8, 0x80) >> shift;
         const color_opt: ?u2 = if ((src_val & src_bit) == 0) draw_color1 else draw_color2;
         if (color_opt) |c| {
-            setPixel(dst, dst_bit_offset + 2*i, c);
+            setPixel(dst, @as(usize, @intCast(dst_bit_offset)), c);
         }
+        dst_bit_offset +%= bit_inc;
     }
 }
 
