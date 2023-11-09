@@ -134,7 +134,8 @@ fn wasm4InitStore(store: *zware.Store) !void {
         .I32, // flags
     }, &[_]zware.ValType{ });
     try store.exposeHostFunction("env", "tone", diskr, &[_]zware.ValType{ .I32, .I32, .I32, .I32 }, &[_]zware.ValType{ });
-    try store.exposeHostFunction("env", "diskr", diskr, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ });
+    try store.exposeHostFunction("env", "diskr", diskr, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ .I32 });
+    try store.exposeHostFunction("env", "diskw", diskw, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ .I32 });
 }
 fn wasm4InitInstance(instance: zware.Instance) !void {
     const mem = wasm4.getMem(instance);
@@ -299,10 +300,7 @@ fn rect(vm: *zware.VirtualMachine) zware.WasmError!void {
     const draw_color1 = wasm4.getDrawColor(mem, ._1);
     const draw_color2 = wasm4.getDrawColor(mem, ._2);
     const border_color: u2 = blk: {
-        if (draw_color2) |c| {
-            //std.log.info("rect {},{} {}x{} c1={?} c2={}", .{x, y, width, height, draw_color1, c});
-            break :blk c;
-        }
+        if (draw_color2) |c| break :blk c;
         if (draw_color1) |c| break :blk c;
         return;
     };
@@ -319,7 +317,7 @@ fn rect(vm: *zware.VirtualMachine) zware.WasmError!void {
                 }
             }
             if (fb_rect.width >= 2) {
-                setPixel(fb, fb_bit_offset + 2*(fb_rect.width - 1), border_color);
+                setPixel(fb, fb_bit_offset + 2*(@as(usize, fb_rect.width) - 1), border_color);
             }
             fb_bit_offset += fb_bit_stride;
         }
@@ -490,7 +488,18 @@ fn tone(vm: *zware.VirtualMachine) zware.WasmError!void {
 fn diskr(vm: *zware.VirtualMachine) zware.WasmError!void {
     const size = vm.popOperand(u32);
     const dest = vm.popOperand(u32);
+
     _ = size;
     _ = dest;
     std.log.warn("todo: implement diskr", .{});
+    try vm.pushOperand(u32, 0);
+}
+
+fn diskw(vm: *zware.VirtualMachine) zware.WasmError!void {
+    const size = vm.popOperand(u32);
+    const src = vm.popOperand(u32);
+    _ = size;
+    _ = src;
+    std.log.warn("todo: implement disk2", .{});
+    try vm.pushOperand(u32, 0);
 }
