@@ -191,7 +191,11 @@ fn tracef(vm: *zware.VirtualMachine) zware.WasmError!void {
                 const str_ptr: [*:0]const u8 = @ptrCast(mem + str_addr);
                 bw.writer().writeAll(std.mem.span(str_ptr)) catch |e| onTraceError(e);
             },
-            'x' => @panic("todo"),
+            'x' => {
+                const value = stack[stack_offset];
+                stack_offset += 1;
+                bw.writer().print("{x}", .{value}) catch |e| onTraceError(e);
+            },
             0 => {
                 std.log.err("tracef format string ended with dangling '%'", .{});
                 i -= 1;
@@ -329,14 +333,52 @@ fn vline(vm: *zware.VirtualMachine) zware.WasmError!void {
 }
 
 fn line(vm: *zware.VirtualMachine) zware.WasmError!void {
-    const y2 = vm.popOperand(i32);
-    const x2 = vm.popOperand(i32);
-    const y1 = vm.popOperand(i32);
-    const x1 = vm.popOperand(i32);
+    var y2 = vm.popOperand(i32);
+    var x2 = vm.popOperand(i32);
+    var y1 = vm.popOperand(i32);
+    var x1 = vm.popOperand(i32);
+    //std.log.info("line {},{} > {},{}", .{x1, y1, x2, y2});
 
     const mem = wasm4.getMem(vm.inst.*);
     const color = wasm4.getDrawColor(mem, ._1) orelse return;
-    std.log.info("todo: line {},{} {},{} color={}", .{x1, y1, x2, y2, color});
+    const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
+
+    if (y1 > y2) {
+        {
+            const swap = x1;
+            x1 = x2;
+            x2 = swap;
+        }
+        {
+            const swap = y1;
+            y1 = y2;
+            y2 = swap;
+        }
+    }
+
+    var dx: i32 = std.math.absInt(x2 - x1) catch unreachable;
+    var sx: i32 = if (x1 < x2) 1 else -1;
+    var dy: i32 = y2 - y1;
+    var err: i32 = @divTrunc(if (dx > dy) dx else -dy,  2);
+    var e2: i32 = undefined;
+
+    while (true) {
+        if (x1 >= 0 and x1 < 160 and y1 >= 0 and y1 < 160) {
+            setPixelXY(fb, @intCast(x1), @intCast(y1), color);
+        }
+        if (x1 == x2 and y1 == y2)
+            break;
+
+        e2 = err;
+        if (e2 > -dx) {
+            err -= dy;
+            x1 += sx;
+        }
+        if (e2 < dy) {
+            err += dx;
+            y1 += 1;
+        }
+    }
 }
 
 fn rect(vm: *zware.VirtualMachine) zware.WasmError!void {
@@ -548,10 +590,10 @@ fn setPixel(dst: [*]u8, bit_offset: usize, color: u2) void {
     //std.log.info("setPixel bit_offset={}", .{bit_offset});
     const val = dst[bit_offset / 8];
     dst[bit_offset / 8] = switch (@as(u2, @intCast((bit_offset/2) % 4))) {
-        0 => (val & 0b00111111) | (@as(u8, color) << 6),
-        1 => (val & 0b11001111) | (@as(u8, color) << 4),
-        2 => (val & 0b11110011) | (@as(u8, color) << 2),
-        3 => (val & 0b11111100) | (@as(u8, color) << 0),
+        0 => (val & 0b11111100) | (@as(u8, color) << 0),
+        1 => (val & 0b11110011) | (@as(u8, color) << 2),
+        2 => (val & 0b11001111) | (@as(u8, color) << 4),
+        3 => (val & 0b00111111) | (@as(u8, color) << 6),
     };
 }
 
@@ -559,6 +601,13 @@ fn setPixels(dst: [*]u8, bit_offset: usize, color: u2, len: u8) void {
     for (0 .. len) |i| {
         setPixel(dst, bit_offset + 2*i, color);
     }
+}
+
+fn setPixelXY(fb: *[wasm4.framebuffer_len]u8, x: u8, y: u8, color: u2) void {
+    if (x >= 160) unreachable;
+    if (y >= 160) unreachable;
+    const bit_offset: usize = @as(usize, y) * fb_bit_stride + @as(usize, x) * 2;
+    setPixel(fb, bit_offset, color);
 }
 
 fn tone(vm: *zware.VirtualMachine) zware.WasmError!void {

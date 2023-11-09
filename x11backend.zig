@@ -396,7 +396,7 @@ fn render(
             // 4 pixels per byte
             const color_byte = fb_row[@divTrunc(src_x, 4)];
             const pixel_pos: u2 = @intCast(src_x % 4);
-            const shift: u3 = switch (pixel_pos) { 0 => 6, 1 => 4, 2 => 2, 3 => 0 };
+            const shift: u3 = switch (pixel_pos) { 0 => 0, 1 => 2, 2 => 4, 3 => 6 };
             const color_palette_index: u2 = @intCast(0x3 & (color_byte >> shift));
 
             switch (global.image_format.depth) {
