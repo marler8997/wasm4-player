@@ -287,6 +287,12 @@ pub fn textUtf16(vm: *zware.VirtualMachine) zware.WasmError!void {
     std.log.warn("textUtf816 not implemented", .{});
 }
 
+// Reference Implementation Issue:
+//
+// if a rect has an "outline", it seems like it adds 2 vertical pixels
+// even if the height is 0?  The same is not done for the width.
+//
+
 fn getFbRect(x: i32, y: i32, width: u32, height: u32) ?Rect(u8) {
     if (x >= 160) return null;
     if (y >= 160) return null;
