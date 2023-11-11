@@ -82,11 +82,14 @@ pub fn main() !void {
 
     try wasm4InitInstance(instance);
 
+    var has_underscore_start = false;
     var has_start = false;
     var has_update = false;
     for (instance.module.exports.list.items) |e| {
         if (std.mem.eql(u8, e.name, "start")) {
             has_start = true;
+        } else if (std.mem.eql(u8, e.name, "_start")) {
+            has_underscore_start = true;
         } else if (std.mem.eql(u8, e.name, "update")) {
             has_update = true;
         } else {
@@ -95,6 +98,9 @@ pub fn main() !void {
     }
     if (!has_update) {
         std.log.err("wasm file is missing the 'update' export", .{});
+    }
+    if (has_underscore_start) {
+        try instance.invoke("_start", &[_]u64{}, &[_]u64{}, .{});
     }
     if (has_start) {
         try instance.invoke("start", &[_]u64{}, &[_]u64{}, .{});
