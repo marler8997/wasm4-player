@@ -23,7 +23,6 @@ const global = struct {
     var image_format: ImageFormat = undefined;
     var resource_id_base: u32 = undefined;
     var window_size: Size = .{ .x = wasm4_size.x, .y = wasm4_size.y };
-    var put_img_buf: ?[]u8 = null;
     pub fn window_id() u32 { return resource_id_base; }
     pub fn bg_gc_id() u32 { return resource_id_base + 1; }
     pub fn fg_gc_id() u32 { return resource_id_base + 2; }
@@ -322,6 +321,18 @@ fn updateKey(instance: zware.Instance, key: Key, state: enum { down, up }) void 
     }
 }
 
+const SocketWriter = std.io.Writer(
+    std.os.socket_t,
+    //@typeInfo(@typeInfo(@TypeOf(sendAll)).Fn.return_type.?).ErrorUnion.error_set,
+    error{},
+    writeSock,
+);
+fn writeSock(sock: std.os.socket_t, buffer: []const u8) !usize {
+    //return zigx.writeSock(sock, buffer, 0);
+    sendAll(sock, buffer) catch |e| @panic(@errorName(e));
+    return buffer.len;
+}
+
 fn render(
     instance: zware.Instance,
     sock: std.os.socket_t,
@@ -344,32 +355,32 @@ fn render(
 
     const stride_u18 = std.math.cast(u18, stride) orelse
         std.debug.panic("image stride {} too big!", .{stride});
-    const msg_len = zigx.put_image.getLen(stride_u18);
-    if (global.put_img_buf) |buf| {
-        if (buf.len != msg_len) {
-            //std.log.info("realloc {} to {}", .{buf.len, msg_len});
-            global.put_img_buf = try global.arena.realloc(buf, msg_len);
-        }
-    } else {
-        global.put_img_buf = try global.arena.alloc(u8, msg_len);
-    }
-    const msg = global.put_img_buf.?;
+    const socket_writer = SocketWriter{ .context = sock };
+    var bw = std.io.BufferedWriter(160*160*3 + (160*32*2), @TypeOf(socket_writer)){
+        .unbuffered_writer = socket_writer,
+    };
+    const writer = bw.writer();
 
-    const msg_data = msg[zigx.put_image.data_offset..];
     var row: u16 = 0;
     while (row < global.window_size.y) : (row += 1) {
-        zigx.put_image.serializeNoDataCopy(msg.ptr, stride_u18, .{
-            .format = .z_pixmap,
-            .drawable_id = global.window_id(),
-            .gc_id = global.fg_gc_id(),
-            .width = global.window_size.x,
-            .height = 1,
-            .x = 0,
-            .y = @bitCast(row),
-            .left_pad = 0,
-            .depth = global.image_format.depth,
-        });
-        var dst_off: usize = 0;
+
+        var written: usize = 0;
+        {
+            var buf: [zigx.put_image.data_offset]u8 = undefined;
+            zigx.put_image.serializeNoDataCopy(&buf, stride_u18, .{
+                .format = .z_pixmap,
+                .drawable_id = global.window_id(),
+                .gc_id = global.fg_gc_id(),
+                .width = global.window_size.x,
+                .height = 1,
+                .x = 0,
+                .y = @bitCast(row),
+                .left_pad = 0,
+                .depth = global.image_format.depth,
+            });
+            try writer.writeAll(&buf);
+            written += buf.len;
+        }
         const y_ratio: f32 = @as(f32, @floatFromInt(row)) / @as(f32, @floatFromInt(global.window_size.y));
         var src_y: usize = @intFromFloat(@trunc(y_ratio * @as(f32, @floatFromInt(wasm4_size.y))));
         if (src_y >= wasm4_size.y) src_y = wasm4_size.y - 1;
@@ -392,18 +403,26 @@ fn render(
             switch (global.image_format.depth) {
                 16 => @panic("todo"),
                 24 => {
+                    std.debug.assert(global.image_format.bits_per_pixel / 8 == 4);
                     const color: u32 = palette[color_palette_index];
-                    msg_data[dst_off + 0] = @intCast(0xff & (color >>  0)); // blue
-                    msg_data[dst_off + 1] = @intCast(0xff & (color >>  8)); // green
-                    msg_data[dst_off + 2] = @intCast(0xff & (color >> 16)); // red
+                    try writer.writeAll(&[_]u8 {
+                        @intCast(0xff & (color >>  0)), // blue
+                        @intCast(0xff & (color >>  8)), // green
+                        @intCast(0xff & (color >> 16)), // red
+                        0, // alpha?
+                    });
+                    written += 4;
                 },
                 32 => @panic("todo"),
                 else => |d| std.debug.panic("TODO: implement image depth {}", .{d}),
             }
-            dst_off += global.image_format.bits_per_pixel / 8;
         }
-        try sendAll(sock, msg);
+
+        const msg_len = zigx.put_image.getLen(stride_u18);
+        if (written != msg_len)
+            std.debug.panic("still need {} bytes", .{msg_len - written});
     }
+    try bw.flush();
 }
 
 const fd_set = extern struct {
