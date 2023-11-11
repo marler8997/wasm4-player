@@ -355,32 +355,40 @@ fn render(
 
     const stride_u18 = std.math.cast(u18, stride) orelse
         std.debug.panic("image stride {} too big!", .{stride});
+    std.log.info("stride={} width={}", .{stride, global.window_size.x});
     const socket_writer = SocketWriter{ .context = sock };
-    var bw = std.io.BufferedWriter(160*160*3 + (160*32*2), @TypeOf(socket_writer)){
+    var bw = std.io.BufferedWriter(
+        102424
+            //160*160*3 + (160*32*2)
+            , @TypeOf(socket_writer)){
         .unbuffered_writer = socket_writer,
     };
     const writer = bw.writer();
 
     var row: u16 = 0;
-    while (row < global.window_size.y) : (row += 1) {
+    var written: usize = 0;
 
-        var written: usize = 0;
-        {
-            var buf: [zigx.put_image.data_offset]u8 = undefined;
-            zigx.put_image.serializeNoDataCopy(&buf, stride_u18, .{
-                .format = .z_pixmap,
-                .drawable_id = global.window_id(),
-                .gc_id = global.fg_gc_id(),
-                .width = global.window_size.x,
-                .height = 1,
-                .x = 0,
-                .y = @bitCast(row),
-                .left_pad = 0,
-                .depth = global.image_format.depth,
-            });
-            try writer.writeAll(&buf);
-            written += buf.len;
-        }
+    const send_height = 160;
+    {
+        var buf: [zigx.put_image.data_offset]u8 = undefined;
+        zigx.put_image.serializeNoDataCopy(&buf, stride_u18 * send_height, .{
+            .format = .z_pixmap,
+            .drawable_id = global.window_id(),
+            .gc_id = global.fg_gc_id(),
+            .width = global.window_size.x,
+            .height = send_height,
+            .x = 0,
+            .y = 0,
+            .left_pad = 0,
+            .depth = global.image_format.depth,
+        });
+        try writer.writeAll(&buf);
+        written += buf.len;
+    }
+    const data_len = stride * send_height;
+    //std.log.info("data_len = {}", .{data_len});
+
+    while (row < send_height) : (row += 1) {
         const y_ratio: f32 = @as(f32, @floatFromInt(row)) / @as(f32, @floatFromInt(global.window_size.y));
         var src_y: usize = @intFromFloat(@trunc(y_ratio * @as(f32, @floatFromInt(wasm4_size.y))));
         if (src_y >= wasm4_size.y) src_y = wasm4_size.y - 1;
@@ -417,11 +425,10 @@ fn render(
                 else => |d| std.debug.panic("TODO: implement image depth {}", .{d}),
             }
         }
-
-        const msg_len = zigx.put_image.getLen(stride_u18);
-        if (written != msg_len)
-            std.debug.panic("still need {} bytes", .{msg_len - written});
     }
+    const msg_len = zigx.put_image.getLen(@intCast(data_len));
+    if (written != msg_len)
+        std.debug.panic("still need {} bytes", .{msg_len - written});
     try bw.flush();
 }
 
