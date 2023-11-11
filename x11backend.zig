@@ -26,8 +26,7 @@ const global = struct {
     var window_size: Size = .{ .x = wasm4_size.x, .y = wasm4_size.y };
     var put_img_buf: ?[]u8 = null;
     pub fn window_id() u32 { return resource_id_base; }
-    pub fn bg_gc_id() u32 { return resource_id_base + 1; }
-    pub fn fg_gc_id() u32 { return resource_id_base + 2; }
+    pub fn fg_gc_id() u32 { return resource_id_base + 1; }
 };
 
 const Key = enum {
@@ -144,16 +143,6 @@ pub fn go(instance: *zware.Instance) !void {
         try conn.send(msg_buf[0..len]);
     }
 
-    {
-        var msg_buf: [zigx.create_gc.max_len]u8 = undefined;
-        const len = zigx.create_gc.serialize(&msg_buf, .{
-            .gc_id = global.bg_gc_id(),
-            .drawable_id = global.window_id(),
-        }, .{
-            .foreground = screen.black_pixel,
-        });
-        try conn.send(msg_buf[0..len]);
-    }
     {
         var msg_buf: [zigx.create_gc.max_len]u8 = undefined;
         const len = zigx.create_gc.serialize(&msg_buf, .{
