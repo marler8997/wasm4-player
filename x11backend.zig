@@ -22,6 +22,7 @@ const global = struct {
 
     var image_format: ImageFormat = undefined;
     var resource_id_base: u32 = undefined;
+    var max_request_len: u18 = undefined;
     var window_size: Size = .{ .x = wasm4_size.x, .y = wasm4_size.y };
     var put_img_buf: ?[]u8 = null;
     pub fn window_id() u32 { return resource_id_base; }
@@ -44,6 +45,7 @@ pub fn go(instance: *zware.Instance) !void {
     const screen = blk: {
         const fixed = conn.setup.fixed();
         global.resource_id_base = fixed.resource_id_base;
+        global.max_request_len = fixed.max_request_len;
         inline for (@typeInfo(@TypeOf(fixed.*)).Struct.fields) |field| {
             std.log.debug("{s}: {any}", .{field.name, @field(fixed, field.name)});
         }
@@ -342,34 +344,53 @@ fn render(
 
     // TODO: use the SHM extension if available
 
+
     const stride_u18 = std.math.cast(u18, stride) orelse
         std.debug.panic("image stride {} too big!", .{stride});
-    const msg_len = zigx.put_image.getLen(stride_u18);
+
+    const buf_len: u18 = blk: {
+        const max_msg_len = @as(u32, zigx.put_image.getLen(stride_u18)) * @as(u32, global.window_size.y);
+        if (max_msg_len > @as(u32, global.max_request_len))
+            break :blk global.max_request_len;
+        break :blk @intCast(max_msg_len);
+    };
+
     if (global.put_img_buf) |buf| {
-        if (buf.len != msg_len) {
+        if (buf.len != buf_len) {
             //std.log.info("realloc {} to {}", .{buf.len, msg_len});
-            global.put_img_buf = try global.arena.realloc(buf, msg_len);
+            global.put_img_buf = try global.arena.realloc(buf, buf_len);
         }
     } else {
-        global.put_img_buf = try global.arena.alloc(u8, msg_len);
+        global.put_img_buf = try global.arena.alloc(u8, buf_len);
     }
     const msg = global.put_img_buf.?;
 
-    const msg_data = msg[zigx.put_image.data_offset..];
+    var msg_off: usize = zigx.put_image.data_offset;
+    var last_flushed_row: u16 = 0;
     var row: u16 = 0;
-    while (row < global.window_size.y) : (row += 1) {
-        zigx.put_image.serializeNoDataCopy(msg.ptr, stride_u18, .{
-            .format = .z_pixmap,
-            .drawable_id = global.window_id(),
-            .gc_id = global.fg_gc_id(),
-            .width = global.window_size.x,
-            .height = 1,
-            .x = 0,
-            .y = @bitCast(row),
-            .left_pad = 0,
-            .depth = global.image_format.depth,
-        });
-        var dst_off: usize = 0;
+    while (true) : (row += 1) {
+        if (row == global.window_size.y or (msg_off + stride > buf_len)) {
+            const height = row - last_flushed_row;
+            if (height == 0) std.debug.panic("todo: stride {} is too long (buf_len={})", .{stride, buf_len});
+
+            zigx.put_image.serializeNoDataCopy(msg.ptr, @intCast(msg_off - zigx.put_image.data_offset), .{
+                .format = .z_pixmap,
+                .drawable_id = global.window_id(),
+                .gc_id = global.fg_gc_id(),
+                .width = global.window_size.x,
+                .height = row - last_flushed_row,
+                .x = 0,
+                .y = @bitCast(last_flushed_row),
+                .left_pad = 0,
+                .depth = global.image_format.depth,
+            });
+            try sendAll(sock, msg[0 .. msg_off]);
+            if (row == global.window_size.y)
+                break;
+            last_flushed_row = row;
+            msg_off = zigx.put_image.data_offset;
+        }
+
         const y_ratio: f32 = @as(f32, @floatFromInt(row)) / @as(f32, @floatFromInt(global.window_size.y));
         var src_y: usize = @intFromFloat(@trunc(y_ratio * @as(f32, @floatFromInt(wasm4_size.y))));
         if (src_y >= wasm4_size.y) src_y = wasm4_size.y - 1;
@@ -393,16 +414,15 @@ fn render(
                 16 => @panic("todo"),
                 24 => {
                     const color: u32 = palette[color_palette_index];
-                    msg_data[dst_off + 0] = @intCast(0xff & (color >>  0)); // blue
-                    msg_data[dst_off + 1] = @intCast(0xff & (color >>  8)); // green
-                    msg_data[dst_off + 2] = @intCast(0xff & (color >> 16)); // red
+                    msg[msg_off + 0] = @intCast(0xff & (color >>  0)); // blue
+                    msg[msg_off + 1] = @intCast(0xff & (color >>  8)); // green
+                    msg[msg_off + 2] = @intCast(0xff & (color >> 16)); // red
                 },
                 32 => @panic("todo"),
                 else => |d| std.debug.panic("TODO: implement image depth {}", .{d}),
             }
-            dst_off += global.image_format.bits_per_pixel / 8;
+            msg_off += global.image_format.bits_per_pixel / 8;
         }
-        try sendAll(sock, msg);
     }
 }
 
