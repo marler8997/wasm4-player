@@ -178,17 +178,7 @@ pub fn go(instance: *zware.Instance) !void {
     std.log.info("read buffer capacity is {}", .{double_buf.half_len});
     var buf = double_buf.contiguousReadBuffer();
 
-    if (builtin.os.tag == .windows) {
-        var mode: c_ulong = 1; // nonblocking
-        if (ws2_32.SOCKET_ERROR == ws2_32.ioctlsocket(conn.sock, ws2_32.FIONBIO, &mode)) {
-            std.log.err("ioctlsocket failed, error={s}", .{@tagName(ws2_32.WSAGetLastError())});
-            std.os.exit(0xff);
-        }
-    } else {
-        const flags = try std.os.fcntl(conn.sock, std.os.F.GETFL, 0);
-        std.log.info("socket flags 0x{x}", .{flags});
-        _ = try std.os.fcntl(conn.sock, std.os.F.SETFL, flags | std.os.O.NONBLOCK);
-    }
+    try updateSocketBlocking(conn.sock, .nonblocking);
 
     const micros_per_frame = @divTrunc(1000000, 60);
     var delay_update_timestamp: ?i64 = null;
@@ -510,12 +500,19 @@ fn calcStride(
 }
 
 fn sendAll(sock: std.os.socket_t, data: []const u8) !void {
+    var changed_to_blocking = false;
+    defer if (changed_to_blocking) {
+        updateSocketBlocking(sock, .nonblocking) catch |err|
+            std.debug.panic("failed to change socket back to nonblocking with {s}", .{@errorName(err)});
+    };
+
     var total_sent: usize = 0;
     while (total_sent != data.len) {
         const last_sent = zigx.writeSock(sock, data[total_sent..], 0) catch |err| switch (err) {
             error.WouldBlock => {
-                // TODO: maybe we should waitSocketWriteable?
-                std.time.sleep(std.time.ns_per_ms * 2); // sleep for 2 ms I guess?
+                if (changed_to_blocking) @panic("possible?");
+                try updateSocketBlocking(sock, .blocking);
+                changed_to_blocking = true;
                 continue;
             },
             error.BrokenPipe => {
@@ -539,5 +536,30 @@ fn onConfigureNotify(msg: zigx.Event.ConfigureNotify) void {
             new_window_size.x, new_window_size.y,
         });
         global.window_size = new_window_size;
+    }
+}
+
+const Blocking = enum { blocking, nonblocking };
+
+fn updateSocketBlocking(sock: std.os.socket_t, blocking: Blocking) !void {
+    if (builtin.os.tag == .windows) {
+        var nonblocking: c_ulong = switch (blocking) { .blocking => 0, .nonblocking => 1 };
+        if (ws2_32.SOCKET_ERROR == ws2_32.ioctlsocket(sock, ws2_32.FIONBIO, &nonblocking)) {
+            std.log.err("ioctlsocket failed, error={s}", .{@tagName(ws2_32.WSAGetLastError())});
+            std.os.exit(0xff);
+        }
+    } else {
+        const flags = try std.os.fcntl(sock, std.os.F.GETFL, 0);
+        const currently_blocking: Blocking = if (0 == (flags & std.os.O.NONBLOCK)) .blocking else .nonblocking;
+        if (blocking == currently_blocking) {
+            std.log.warn("socket is already in {s} mode", .{@tagName(blocking)});
+            return;
+        }
+        const new_flags = switch (blocking) {
+            .blocking => flags & ~@as(@TypeOf(flags), std.os.O.NONBLOCK),
+            .nonblocking => flags | std.os.O.NONBLOCK,
+        };
+        //std.log.info("socket flags 0x{x}", .{flags});
+        _ = try std.os.fcntl(sock, std.os.F.SETFL, new_flags);
     }
 }
