@@ -1,8 +1,10 @@
 const builtin = @import("builtin");
 const std = @import("std");
+const build_options = @import("build_options");
 const zware = @import("zware");
 const wasm4 = @import("wasm4.zig");
 const font = @import("font.zig").font;
+const bbmem = @import("bbmem.zig");
 
 const MappedFile = @import("MappedFile.zig");
 
@@ -60,6 +62,13 @@ pub fn main() !void {
         break :blk try MappedFile.init(wasm_file, .{ .mode = .read_only });
     };
 
+    return switch (build_options.wasm) {
+        .zware => try runZware(wasm_mapped.mem),
+        .bytebox => try runBytebox(wasm_mapped.mem),
+    };
+}
+
+fn runZware(wasm_mem: []const u8) !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     //defer switch (gpa.deinit()) {
     //    .ok => {},
@@ -72,7 +81,7 @@ pub fn main() !void {
 
     try wasm4InitStore(&store);
 
-    var module = zware.Module.init(alloc, wasm_mapped.mem);
+    var module = zware.Module.init(alloc, wasm_mem);
     defer module.deinit();
     try module.decode();
 
@@ -80,7 +89,7 @@ pub fn main() !void {
     try instance.instantiate();
     defer instance.deinit();
 
-    try wasm4InitInstance(instance);
+    wasm4InitMem(wasm4.getMem(instance));
 
     var has_underscore_start = false;
     var has_underscore_initialize = false;
@@ -120,6 +129,133 @@ pub fn main() !void {
     try @import("x11backend.zig").go(&instance);
 }
 
+fn noResize(mem: ?[*]u8, new_size_bytes: usize, old_size_bytes: usize, userdata: ?*anyopaque) ?[*]u8 {
+    _ = mem;
+    //_ = new_size_bytes;
+    //_ = old_size_bytes;
+    _ = userdata;
+    std.debug.assert(old_size_bytes == 0);
+    std.debug.assert(new_size_bytes ==  65536);
+    return &bbmem.array;
+    //re
+    //std.log.info("{} {}", .{new_size_bytes, old_size_bytes});
+    //@panic("noresize");
+}
+fn noFree(mem: ?[*]u8, size_bytes: usize, userdata: ?*anyopaque) void {
+    _ = mem;
+    _ = size_bytes;
+    _ = userdata;
+    @panic("nofree");
+}
+
+fn runBytebox(wasm_mem: []const u8) !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    //defer switch (gpa.deinit()) {
+    //    .ok => {},
+    //    .leak => std.log.err("memory leak", .{}), //@panic("memory leak"),
+    //};
+    const alloc = gpa.allocator();
+
+    const bytebox = @import("bytebox");
+    var module_definition = bytebox.ModuleDefinition.init(alloc, .{});
+    defer module_definition.deinit();
+    try module_definition.decode(wasm_mem);
+
+    var imports = [_]bytebox.ModuleImportPackage{
+        bytebox.ModuleImportPackage.init("env", null, null, alloc) catch |e| oom(e),
+    };
+    const env = &imports[0];
+    var host_mem = bytebox.MemoryInstance.init(
+        .{ .min = 0, .max = 1 },
+        .{
+            .resize_callback = noResize,
+            .free_callback = noFree,
+            .userdata = null,
+        },
+    );
+    if (host_mem.grow(1) == false) {
+        unreachable;
+    }
+    env.memories.append(.{
+        .name = "memory",
+        .data = .{ .Host = &host_mem },
+    }) catch |e| oom(e);
+    try env.addHostFunction("traceUtf8", &[_]bytebox.ValType{ .I32, .I32 }, &[_]bytebox.ValType{ }, bb_todo, null);
+    try env.addHostFunction("blit", &[_]bytebox.ValType{
+        .I32, // sprite_ptr
+        .I32, .I32, // x, y
+        .I32, .I32, // width, height
+        .I32, // flags
+    }, &[_]bytebox.ValType{ }, bb_blit, null);
+    try env.addHostFunction("blitSub", &[_]bytebox.ValType{
+        .I32, // sprite_ptr
+        .I32, .I32, // x, y
+        .I32, .I32, // width, height
+        .I32, .I32, // srcX, srcY
+        .I32, // stride
+        .I32, // flags
+    }, &[_]bytebox.ValType{ }, bb_blitSub, null);
+    try env.addHostFunction("textUtf8", &[_]bytebox.ValType{
+        .I32, // str
+        .I32, .I32, // x, y
+        .I32, // ?
+    }, &[_]bytebox.ValType{ }, bb_textUtf8, null);
+
+    var instance = bytebox.ModuleInstance.init(&module_definition, alloc);
+    defer instance.deinit();
+    try instance.instantiate(.{
+        .imports = &imports,
+        //.wasm_memory_external = .{},
+    });
+
+    @memset(wasm4.getMem(instance)[0..65536], 0);
+    wasm4InitMem(wasm4.getMem(instance));
+    //try wasm4InitStore(&store);
+    //try wasm4InitInstance(instance);
+
+    var funcs: struct {
+        _start: ?bytebox.FunctionHandle = null,
+        start: ?bytebox.FunctionHandle = null,
+        _initialize: ?bytebox.FunctionHandle = null,
+        update: ?bytebox.FunctionHandle = null,
+    } = .{};
+    for (module_definition.exports.functions.items) |func| {
+        if (false) {
+        } else if (std.mem.eql(u8, func.name, "_start")) {
+            funcs._start = .{ .index = func.index, .type = .Export };
+        } else if (std.mem.eql(u8, func.name, "_initialize")) {
+            funcs._initialize = .{ .index = func.index, .type = .Export };
+        } else if (std.mem.eql(u8, func.name, "start")) {
+            funcs.start = .{ .index = func.index, .type = .Export };
+        } else if (std.mem.eql(u8, func.name, "update")) {
+            funcs.update = .{ .index = func.index, .type = .Export };
+        } else {
+            std.log.warn("unknown export '{s}'", .{func.name});
+        }
+    }
+    const update = funcs.update orelse fatal("wasm file is missing the 'update' export", .{});
+    std.log.info("exports _start={?} _initialize={?} start={?}", .{
+        funcs._start,
+        funcs._initialize,
+        funcs.start,
+    });
+    if (funcs._start) |_start| {
+        try instance.invoke(_start, &[_]bytebox.Val{}, &[_]bytebox.Val{}, .{});
+    }
+    if (funcs._initialize) |_initialize| {
+        try instance.invoke(_initialize, &[_]bytebox.Val{}, &[_]bytebox.Val{}, .{});
+    }
+    if (funcs.start) |start| {
+        try instance.invoke(start, &[_]bytebox.Val{}, &[_]bytebox.Val{}, .{});
+    }
+    _ = update;
+    //bytebox.DebugTrace.traceFunction(&instance, 0, update.index);
+    //const did_set = bytebox.DebugTrace.setMode(.Function);
+    //const did_set = bytebox.DebugTrace.setMode(.Instruction);
+    //std.debug.assert(did_set);
+    try @import("x11backend.zig").go(&instance);
+}
+
 fn wasm4InitStore(store: *zware.Store) !void {
     try store.exposeMemory("env", "memory", 1, 1);
 
@@ -156,8 +292,8 @@ fn wasm4InitStore(store: *zware.Store) !void {
     try store.exposeHostFunction("env", "diskr", diskr, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ .I32 });
     try store.exposeHostFunction("env", "diskw", diskw, &[_]zware.ValType{ .I32, .I32 }, &[_]zware.ValType{ .I32 });
 }
-fn wasm4InitInstance(instance: zware.Instance) !void {
-    const mem = wasm4.getMem(instance);
+fn wasm4InitMem(mem: [*]u8) void {
+    //const mem = wasm4.getMem(instance);
     const palette: *align(1) [4]u32 = @ptrCast(mem + wasm4.palette_addr);
     palette[0] = 0xe0f8cf;
     palette[1] = 0x86c06c;
@@ -491,7 +627,7 @@ fn blitCommon(
 ) void {
     const fb = mem[wasm4.framebuffer_addr..][0 .. wasm4.framebuffer_len];
 
-    //std.log.info("blit ptr={} pos={},{} size={}x{} flags=0x{x}", .{sprite_addr, x, y, width, height, flags});
+    std.log.info("blit ptr={*} pos={},{} size={}x{} flags=0x{x}", .{sprite, x, y, width, height, flags});
     const fb_rect = getFbRect(x, y, width, height) orelse return;
     const sprite_offset = XY(u32){
         .x = src_x + @as(u32, @intCast(fb_rect.x - x)),
@@ -535,6 +671,58 @@ fn blitCommon(
             wasm4.getDrawColor(mem, ._2),
         );
     }
+}
+
+fn bb_todo(
+    userdata: ?*anyopaque,
+    module: *@import("bytebox").ModuleInstance,
+    params: [*]const @import("bytebox").Val,
+    returns: [*]@import("bytebox").Val,
+) void {
+    _ = userdata;
+    _ = module;
+    _ = params;
+    _ = returns;
+    std.log.info("todo: implement this function", .{});
+}
+
+fn bb_textUtf8(
+    userdata: ?*anyopaque,
+    module: *@import("bytebox").ModuleInstance,
+    params: [*]const @import("bytebox").Val,
+    returns: [*]@import("bytebox").Val,
+) void {
+    _ = userdata;
+    _ = module;
+    _ = params;
+    _ = returns;
+    std.log.info("todo: textUtf8", .{});
+}
+
+fn bb_blit(
+    userdata: ?*anyopaque,
+    module: *@import("bytebox").ModuleInstance,
+    params: [*]const @import("bytebox").Val,
+    returns: [*]@import("bytebox").Val,
+) void {
+    _ = userdata;
+    _ = module;
+    _ = params;
+    _ = returns;
+    std.log.info("todo: blit", .{});
+}
+
+fn bb_blitSub(
+    userdata: ?*anyopaque,
+    module: *@import("bytebox").ModuleInstance,
+    params: [*]const @import("bytebox").Val,
+    returns: [*]@import("bytebox").Val,
+) void {
+    _ = userdata;
+    _ = module;
+    _ = params;
+    _ = returns;
+    std.log.info("todo: blitSub", .{});
 }
 
 fn blit(vm: *zware.VirtualMachine) zware.WasmError!void {

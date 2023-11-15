@@ -1,11 +1,18 @@
 const std = @import("std");
 
+const Wasm = enum { zware, bytebox};
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const wasm = b.option(Wasm, "wasm", "The wasm backend") orelse .zware;
+
     const zware_dep = b.dependency("zware", .{});
     const zigx_dep = b.dependency("zigx", .{});
+
+    const build_options = b.addOptions();
+    build_options.addOption(Wasm, "wasm", wasm);
 
     {
         const exe = b.addExecutable(.{
@@ -14,7 +21,13 @@ pub fn build(b: *std.Build) void {
             .target = target,
             .optimize = optimize,
         });
-        exe.addModule("zware", zware_dep.module("zware"));
+        exe.addOptions("build_options", build_options);
+        switch (wasm) {
+            .zware => exe.addModule("zware", zware_dep.module("zware")),
+            .bytebox => exe.addModule("bytebox", b.createModule(.{
+                .source_file = .{ .path = "bytebox/src/core.zig" },
+            })),
+        }
         exe.addModule("x", zigx_dep.module("zigx"));
         b.installArtifact(exe);
 

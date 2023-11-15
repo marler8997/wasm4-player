@@ -2,9 +2,16 @@ const builtin = @import("builtin");
 const std = @import("std");
 const ws2_32 = std.os.windows.ws2_32;
 const zware = @import("zware");
+const bytebox = @import("bytebox");
 const wasm4 = @import("wasm4.zig");
 const zigx = @import("x");
 const x11common = @import("x11common.zig");
+
+const build_options = @import("build_options");
+const WasmInstance = switch (build_options.wasm) {
+    .zware => @import("zware").Instance,
+    .bytebox => @import("bytebox").ModuleInstance,
+};
 
 const Size = struct {
     x: u16,
@@ -35,7 +42,7 @@ const Key = enum {
     up, down,
 };
 
-pub fn go(instance: *zware.Instance) !void {
+pub fn go(instance: *WasmInstance) !void {
     try zigx.wsaStartup();
 
     const conn = try x11common.connect(global.arena);
@@ -191,7 +198,27 @@ pub fn go(instance: *zware.Instance) !void {
                 if (do_update) {
                     delay_update_timestamp = loop_timestamp;
                     wasm4.clearFramebuffer(instance.*);
-                    try instance.invoke("update", &[_]u64{}, &[_]u64{}, .{});
+                    const before = std.time.milliTimestamp();
+                    switch (build_options.wasm) {
+                        .zware => try instance.invoke("update", &[_]u64{}, &[_]u64{}, .{}),
+                        .bytebox => {
+                            const update: bytebox.FunctionHandle = blk2: {
+                                for (instance.module_def.exports.functions.items) |func| {
+                                    if (std.mem.eql(u8, func.name, "update")) break :blk2
+                                        .{ .index = func.index, .type = .Export };
+                                }
+                                @panic("error?");
+                            };
+                            std.log.info("update {}", .{update});
+                            try instance.invoke(update, &[_]bytebox.Val{
+                                bytebox.Val{ .I32 = 0 },
+                                bytebox.Val{ .I32 = 0 },
+                                bytebox.Val{ .I32 = 0 },
+                                bytebox.Val{ .I32 = 0 },
+                            }, &[_]bytebox.Val{}, .{});
+                        },
+                    }
+                    std.log.info("{}", .{std.time.milliTimestamp() - before});
                     try render(instance.*, conn.sock);
                     break :blk std.time.microTimestamp();
                 }
@@ -297,7 +324,7 @@ pub fn go(instance: *zware.Instance) !void {
     }
 }
 
-fn updateKey(instance: zware.Instance, key: Key, state: enum { down, up }) void {
+fn updateKey(instance: WasmInstance, key: Key, state: enum { down, up }) void {
     const flag = switch (key) {
         ._1 => wasm4.button_1,
         ._2 => wasm4.button_2,
@@ -314,7 +341,7 @@ fn updateKey(instance: zware.Instance, key: Key, state: enum { down, up }) void 
 }
 
 fn render(
-    instance: zware.Instance,
+    instance: WasmInstance,
     sock: std.os.socket_t,
 ) !void {
     //std.log.info("render", .{});
