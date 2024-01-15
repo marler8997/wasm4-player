@@ -524,6 +524,7 @@ fn sendAll(sock: std.os.socket_t, data: []const u8) !void {
                 changed_to_blocking = true;
                 continue;
             },
+            error.ConnectionResetByPeer,
             error.BrokenPipe => {
                 std.log.info("X server connection closed", .{});
                 std.os.exit(0);
