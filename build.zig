@@ -8,6 +8,14 @@ pub fn build(b: *std.Build) void {
     const zigx_dep = b.dependency("zigx", .{});
 
     {
+        const http_server_build = b.dependency("http_server", .{});
+        const file_server = http_server_build.artifact("fileserver");
+        const run = b.addRunArtifact(file_server);
+        run.cwd = b.pathFromRoot("webroot");
+        b.step("serve", "Serve the game files").dependOn(&run.step);
+    }
+
+    {
         const exe = b.addExecutable(.{
             .name = "wasm4-player",
             .root_source_file = .{ .path = "player.zig" },

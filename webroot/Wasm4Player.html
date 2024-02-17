@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<title>Wasm4 Player</title>
+<style>
+* { margin: 0; padding: 0 }
+html {height: 100%}
+body {
+  height: 100%;
+}
+</style>
+<script>
+//const wasm_base64 = "<@INSERT_WASM_HERE@>";
+var global_wasm = undefined;
+var global_current_log = "";
+//var global_canvas_dom = undefined;
+//var global_canvas = undefined;
+//var global_wasm_last_size_sent = undefined;
+const wasm_env = {
+    logWrite: function(ptr, len) {
+        global_current_log += readStr(global_wasm.memory.buffer, ptr, len);
+    },
+    logFlush: function() {
+        console.log(global_current_log);
+        global_current_log = "";
+    },
+    /*
+    initCanvas: function() {
+        global_canvas_dom = document.getElementById("Canvas");
+        global_canvas = global_canvas_dom.getContext("2d");
+    },
+    canvasClear: function() {
+        global_canvas.fillStyle = "white";
+        global_canvas.fillRect(0, 0, global_canvas_dom.width, global_canvas_dom.height);
+    },
+    strokeRgb: function(rgb) {
+        global_canvas.strokeStyle = "#" + rgb.toString(16);
+    },
+    strokeRect: function(x, y, width, height) {
+        global_canvas.strokeRect(x, y, width, height);
+    },
+    fillRgb: function(rgb) {
+        global_canvas.fillStyle = "#" + rgb.toString(16);
+    },
+    fillRect: function(x, y, width, height) {
+        global_canvas.fillRect(x, y, width, height);
+    },
+    drawText: function(x, y, font_size, text_ptr, text_len) {
+        const text = readStr(global_wasm.memory.buffer, text_ptr, text_len);
+        //console.log("drawText " + x + ", " + y + " font_size=" + font_size + ", '" + text + "'");
+        global_canvas.font = font_size + 'px sans-serif';
+        global_canvas.fillStyle = "black";
+        global_canvas.fillText(text, x, y);
+    },
+   */
+};
+  /*
+WebAssembly.instantiate(
+    Uint8Array.from(atob(wasm_base64), c => c.charCodeAt(0)).buffer,
+    { env: wasm_env }
+).then(wasm => {
+    global_wasm = wasm.instance.exports;
+});
+*/
+function readStr(buffer, ptr, len) {
+    const array = new Uint8Array(buffer, ptr, len);
+    const decoder = new TextDecoder();
+    return decoder.decode(array);
+}
+  /*
+function encodeStr(str) {
+    const encoder = new TextEncoder();
+    return encoder.encode(str);
+}
+function writeEncodedStr(buffer, ptr, encoded_str) {
+    const dest = new Uint8Array(buffer, ptr, encoded_str.length);
+    for (let i = 0; i < encoded_str.length; i++) {
+        dest[i] = encoded_str[i];
+    }
+}
+
+function fatal(msg) {
+    console.log("fatal: " + msg);
+    alert(msg);
+}
+
+function allocStr(str) {
+    const encoded = encodeStr(str);
+    const ptr = global_wasm.alloc(encoded.length);
+    if (ptr == 0) {
+        fatal("WASM is out of memory");
+        return { ptr: 0, len: 0 };
+    }
+    writeEncodedStr(global_wasm.memory.buffer, ptr, encoded);
+    return { ptr: ptr, len: encoded.length };
+}
+
+function loadHtml(name, html) {
+    const name_obj = allocStr(name);
+    if (name_obj.length == 0) {
+        fatal("WASM is out of memory");
+        return;
+    }
+    const html_obj = allocStr(html);
+    if (html_obj.length == 0) {
+        fatal("WASM is out of memory");
+    } else {
+        const iframe = document.getElementById("Iframe");
+        iframe.srcdoc = html;
+
+        global_canvas = undefined;
+        const size = updateRenderSizes();
+        global_wasm.loadHtml(
+            name_obj.ptr, name_obj.len,
+            html_obj.ptr, html_obj.len,
+            size.x, size.y);
+        global_wasm_last_size_sent = size;
+        global_wasm.release(html_obj.ptr, html_obj.len);
+    }
+    global_wasm.release(name_obj.ptr, name_obj.len);
+}
+
+function submitUrl() {
+    console.log("todo submitUrl");
+}
+function submitText() {
+    let node = document.getElementById("TextInput");
+    if (node.value.length > 0) {
+        loadHtml("[text-supplied-by-user]", node.value);
+    }
+}
+
+function updateRenderSizes() {
+    const input_header = document.getElementById("InputHeader");
+    const new_renders_div_height = window.innerHeight - input_header.offsetHeight;
+
+    const container = document.getElementById("RendersDiv");
+
+    const canvas_wrapper = document.getElementById("CanvasWrapper");
+    const iframe_wrapper = document.getElementById("IframeWrapper");
+
+    const size = {
+        x: Math.trunc(Math.floor(container.offsetWidth / 2)) - 16,
+        y: Math.trunc(Math.min(canvas_wrapper.offsetHeight, iframe_wrapper.offsetHeight)) - 2,
+    };
+
+    const c = document.getElementById("Canvas");
+    c.width = size.x;
+    c.height = size.y;
+    const iframe = document.getElementById("Iframe");
+    iframe.width = size.x;
+    iframe.height = size.y;
+
+    if (global_canvas != undefined) {
+        if (global_wasm_last_size_sent.x != size.x || global_wasm_last_size_sent.y != size.y) {
+            global_wasm.onResize(size.x, size.y);
+            global_wasm_last_size_sent = size;
+        }
+    }
+    return size;
+}
+function onWindowResize() {
+    updateRenderSizes();
+}
+window.addEventListener('resize', onWindowResize);
+
+function bodyOnLoad() {
+    updateRenderSizes();
+}
+
+*/
+</script>
+</head><body>
+
+    <h1> TODO: Zig WASM Player! </h1>
+    
+</body></html>

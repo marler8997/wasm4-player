@@ -10,6 +10,10 @@
             .url = "https://github.com/marler8997/zigx/archive/80c9f0d3d400f0582722dd2013a0d1c2ca4d8b19.tar.gz",
             .hash = "122037c25083823051ba1d79eb1d9cdc726707b98534a4d3e566b04da3aef14c56f6",
         },
+        .http_server = .{
+            .url = "https://github.com/marler8997/zig-http-server/archive/44583d32efae08ab37d2f66ee40949ed9baadbf7.tar.gz",
+            .hash = "1220b62ee33b947dd1904602554d582377f63a97c75a8c8607fa1821ed179f9dce5d",
+        },
     },
     .paths = .{
         "build.zig",
